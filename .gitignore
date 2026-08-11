@@ -17,3 +17,25 @@ references/
 launcher/build/
 launcher/release/
 launcher/artifacts/
+
+# Standalone WebGPT/Luna local state. These paths may contain conversation
+# bindings, Codex JSONL events, command output, or authenticated browser data.
+/.local/
+/.state/
+/logs/
+/tmp/
+/temp/
+/sessions/
+/jobs/
+/browser-profile/
+/user-data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.tmp
+*.temp
+.env.*
+!.env.example
+**/storage-state*.json
+**/launcher-browser.json
+**/runtime-key*
