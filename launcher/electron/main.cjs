@@ -168,7 +168,7 @@ async function restoreCodexRouteAfterRuntimeFailure({ logger, stateStore }) {
     const state = stateStore.update({
       bridgeEnabled: false,
       codexCatalogVerified: false,
-      codexRestartRequired: true,
+      codexRestartRequired: false,
     });
     send("launcher:state-changed", state);
     stopCatalogVerificationMonitor();
@@ -473,7 +473,7 @@ function registerIpc({ logger, stateStore }) {
     const result = await runtimeHost.setBridgeEnabled(enabled === true);
     const state = stateStore.update({
       bridgeEnabled: result.active,
-      codexRestartRequired: true,
+      codexRestartRequired: false,
     });
     send("launcher:state-changed", state);
     if (result.active) startCatalogVerificationMonitor({ logger, stateStore });
@@ -490,11 +490,11 @@ function registerIpc({ logger, stateStore }) {
       cancelId: 0,
       title: chinese ? "移除 Codex Web GPT" : "Remove Codex Web GPT",
       message: chinese
-        ? "从 Codex 中移除 ChatGPT Web 模型并恢复此前的模型路由？"
-        : "Remove the ChatGPT Web models from Codex and restore the previous model route?",
+        ? "移除 WebGPT Luna 的独立本地运行时？"
+        : "Remove the standalone WebGPT Luna runtime?",
       detail: chinese
-        ? "启动器中的 ChatGPT 登录 profile 会保留。Codex 需要重启一次。"
-        : "The launcher's ChatGPT login profile will be preserved. Codex must be restarted once.",
+        ? "启动器中的 ChatGPT 登录 profile 会保留。Codex 配置不会被修改。"
+        : "The launcher's ChatGPT login profile is preserved. Codex configuration is not modified.",
       noLink: true,
     });
     if (confirmation.response !== 1) return { cancelled: true };
@@ -510,7 +510,7 @@ function registerIpc({ logger, stateStore }) {
       mcpSetupComplete: false,
       mcpRuntimeInstalled: false,
       mcpGuideStep: 0,
-      codexRestartRequired: true,
+      codexRestartRequired: false,
     });
     send("launcher:state-changed", state);
     stopCatalogVerificationMonitor();
@@ -518,18 +518,18 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:setup-core", async () => {
     const browser = await browserHost.probeAuthentication();
-    if (!browser.authenticated) throw new Error("Sign in to ChatGPT before installing the Codex integration");
+    if (!browser.authenticated) throw new Error("Sign in to ChatGPT before preparing the standalone runtime");
     const setupState = stateStore.read();
     if (!setupState.coreSetupComplete
       && !(smokePassedThisSession || smokePassedForCurrentVersion(setupState))) {
-      throw new Error("Run the browser smoke test before installing the Codex integration");
+      throw new Error("Run the browser smoke test before preparing the standalone runtime");
     }
     const result = await runtimeHost.setupCore();
     stateStore.update({
-      bridgeEnabled: true,
+      bridgeEnabled: false,
       coreSetupComplete: true,
-      codexCatalogVerified: false,
-      codexRestartRequired: true,
+      codexCatalogVerified: true,
+      codexRestartRequired: false,
       ...(result.mode === "full" ? {
         mcpRuntimeInstalled: true,
         mcpSetupComplete: false,
@@ -545,8 +545,7 @@ function registerIpc({ logger, stateStore }) {
         message: error instanceof Error ? error.message : String(error),
       });
     });
-    startCatalogVerificationMonitor({ logger, stateStore });
-    return { ok: true, stdout: result.stdout, restartRequired: true };
+    return { ok: true, stdout: result.stdout, restartRequired: false };
   });
   handle("launcher:setup-mcp", async (_event, input) => {
     await browserHost.reveal();
@@ -559,7 +558,7 @@ function registerIpc({ logger, stateStore }) {
       mcpRuntimeInstalled: true,
       mcpSetupComplete: false,
       mcpGuideStep: 2,
-      codexRestartRequired: true,
+      codexRestartRequired: false,
     });
     return { ok: true, stdout: result.stdout };
   });
@@ -805,10 +804,10 @@ async function start() {
     const upgrade = await runtimeHost.upgradeManagedRuntime();
     if (upgrade.updated) {
       const state = stateStore.update({
-        bridgeEnabled: upgrade.bridgeEnabled,
+        bridgeEnabled: false,
         coreSetupComplete: true,
-        codexCatalogVerified: false,
-        codexRestartRequired: true,
+        codexCatalogVerified: true,
+        codexRestartRequired: false,
         ...(upgrade.mode === "full" ? {
           mcpRuntimeInstalled: true,
           mcpSetupComplete: false,

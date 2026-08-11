@@ -688,28 +688,12 @@ class RuntimeHost {
   }
 
   async bridgeStatus(operationName = "bridge-status") {
-    const result = await this.run(operationName, ["route", "status"], {
-      embedded: true,
-      message: "Checking Codex bridge route",
-      successMessage: "Codex bridge route checked",
-      timeoutMs: 15_000,
-    });
-    return parseBridgeRouteResult(result.stdout, { requireInstalled: true });
+    void operationName;
+    return { installed: false, active: false, standalone: true };
   }
 
   async restoreBridgeRouteWithinOperation(operationName) {
-    const current = await this.bridgeStatus(operationName);
-    if (!current.installed || !current.active) return current;
-    const disconnected = await this.run(operationName, ["route", "disconnect"], {
-      embedded: true,
-      message: "Restoring the previous Codex route",
-      successMessage: "Previous Codex route restored",
-      timeoutMs: 15_000,
-    });
-    return {
-      ...parseBridgeRouteResult(disconnected.stdout, { expectedActive: false }),
-      installed: true,
-    };
+    return await this.bridgeStatus(operationName);
   }
 
   async restoreBridgeRoute(operationName = "bridge-route-restore") {
@@ -723,67 +707,8 @@ class RuntimeHost {
   }
 
   async setBridgeEnabled(enabled) {
-    const desired = enabled === true;
-    const name = desired ? "bridge-connect" : "bridge-disconnect";
-    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
-    this.lifecycleOperation = name;
-    try {
-      const current = await this.bridgeStatus(name);
-      if (!current.installed) throw new Error("Install the Codex integration before changing the bridge route");
-      if (desired) {
-        const runtime = await this.supervisor.startIfConfigured();
-        if (runtime.status !== "ready") {
-          throw new Error(`Local runtime is ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
-        }
-        if (current.active) return current;
-        try {
-          const connected = await this.run(name, ["route", "connect"], {
-            embedded: true,
-            message: "Connecting Codex to the launcher",
-            successMessage: "Codex bridge connected",
-            timeoutMs: 15_000,
-          });
-          return parseBridgeRouteResult(connected.stdout, { expectedActive: true });
-        } catch (error) {
-          let cleanupError;
-          try { await this.supervisor.stopForSetup(); } catch (caught) { cleanupError = caught; }
-          if (!cleanupError) throw error;
-          throw new Error(
-            `${error instanceof Error ? error.message : String(error)}; stopping the unused runtime also failed:`
-            + ` ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-          );
-        }
-      }
-
-      await this.supervisor.stopForSetup();
-      if (!current.active) return current;
-      try {
-        const disconnected = await this.run(name, ["route", "disconnect"], {
-          embedded: true,
-          message: "Restoring the previous Codex route",
-          successMessage: "Codex bridge disconnected",
-          timeoutMs: 15_000,
-        });
-        return parseBridgeRouteResult(disconnected.stdout, { expectedActive: false });
-      } catch (error) {
-        let recoveryError;
-        try {
-          const runtime = await this.supervisor.startIfConfigured();
-          if (runtime.status !== "ready") {
-            throw new Error(`runtime recovery returned ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
-          }
-        } catch (caught) {
-          recoveryError = caught;
-        }
-        if (!recoveryError) throw error;
-        throw new Error(
-          `${error instanceof Error ? error.message : String(error)}; restoring the previous runtime also failed:`
-          + ` ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
-        );
-      }
-    } finally {
-      this.lifecycleOperation = null;
-    }
+    if (enabled === true) throw new Error("Codex routing is disabled by standalone WebGPT Luna");
+    return await this.bridgeStatus("standalone-route-disabled");
   }
 
   mcpConnectorName() {
@@ -865,7 +790,6 @@ class RuntimeHost {
       "--browser-host-descriptor",
       this.browserDescriptorPath,
       "--refresh-account-capabilities",
-      "--replace-codex-route",
       "--acknowledge-unofficial",
       "--restart-service",
     ];
@@ -889,7 +813,6 @@ class RuntimeHost {
       || (existing.config?.releaseVersion === currentVersion && !connectorMigrationRequired)) {
       return { updated: false };
     }
-    const route = await this.bridgeStatus("runtime-upgrade-route");
     const args = [
       "setup",
       existing.mode === "full" ? "--full" : "--browser-only",
@@ -906,11 +829,10 @@ class RuntimeHost {
       successMessage: `Launcher runtime upgraded to ${currentVersion}`,
       timeoutMs: existing.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
     });
-    if (!route.active) await this.setBridgeEnabled(false);
     return {
       updated: true,
       mode: existing.mode,
-      bridgeEnabled: route.active,
+      bridgeEnabled: false,
       fromVersion: existing.config.releaseVersion,
       toVersion: currentVersion,
       connectorMigrated: connectorMigrationRequired,
@@ -934,7 +856,6 @@ class RuntimeHost {
       this.browserDescriptorPath,
       "--app-name",
       this.browserConnectorName(),
-      "--replace-codex-route",
     ];
     if (reuseSavedCredentials) {
       args.push("--acknowledge-unofficial", "--restart-service");

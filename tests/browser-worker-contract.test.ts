@@ -86,7 +86,7 @@ test("browser configuration rejects the retired connector identity before openin
     adapter: "chatgpt-web",
     baseUrl: "browser://chatgpt",
     chatgptWeb: { appName: "Codex Native" },
-  })).toThrow(/requires a newly created connector named "Codex Native2".*do not rename or refresh/s);
+  })).toThrow(/requires a newly created connector named "WebGPT Luna".*do not rename or refresh/s);
 });
 
 test("connector verification reports a legacy-only ChatGPT menu as a migration error", async () => {
@@ -99,16 +99,16 @@ test("connector verification reports a legacy-only ChatGPT menu as a migration e
   }, {}, 4);
 
   expect(message).toContain('Legacy ChatGPT connector "Codex Native" was found');
-  expect(message).toContain('newly created connector named "Codex Native2"');
+  expect(message).toContain('newly created connector named "WebGPT Luna"');
   expect(message).toContain('do not rename or refresh "Codex Native"');
   expect(message).not.toContain("Another connector");
 
   const mixedMessage = await connectorMentionFailure.call({
     config: { appName: CHATGPT_CONNECTOR_NAME },
-    connectorMentionRowTitles: async () => ["Codex Native", "Codex Native2"],
+    connectorMentionRowTitles: async () => ["Codex Native", "WebGPT Luna"],
   }, {}, 4);
   expect(mixedMessage).not.toContain("Legacy ChatGPT connector");
-  expect(mixedMessage).toContain('no row named "Codex Native2"');
+  expect(mixedMessage).toContain('no row named "WebGPT Luna"');
 });
 
 test("browser stage timeout aborts late page acquisition", async () => {
@@ -445,7 +445,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
       expect(selector).toBe('[data-id^="plugin:"][data-keyword]');
       return {
         filter: (options: { hasText: string; visible: boolean }) => {
-          expect(options).toEqual({ hasText: "Codex Native2", visible: true });
+          expect(options).toEqual({ hasText: "WebGPT Luna", visible: true });
           return selectedConnector;
         },
       };
@@ -461,7 +461,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
   };
   const page = {
     getByText: (text: string, options: { exact: boolean }) => {
-      expect(text).toBe("Codex Native2");
+      expect(text).toBe("WebGPT Luna");
       expect(options).toEqual({ exact: true });
       return { exactConnectorLabel: true };
     },
@@ -484,7 +484,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
 
   let activeComposerCalls = 0;
   const resolved = await selectConnector.call({
-    config: { appName: "Codex Native2" },
+    config: { appName: "WebGPT Luna" },
     connectorIsSelected: async () => connectorSelected,
     selectedConnectorControl: () => selectedConnector,
     activeComposer: async () => {
@@ -555,7 +555,7 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
 
   let activeComposerCalls = 0;
   await selectConnector.call({
-    config: { appName: "Codex Native2" },
+    config: { appName: "WebGPT Luna" },
     connectorIsSelected: async () => selected,
     selectedConnectorControl: () => selectedConnector,
     activeComposer: async () => {
@@ -622,7 +622,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
 
   let activeComposerCalls = 0;
   await attachPrompt.call({
-    config: { appName: "Codex Native2" },
+    config: { appName: "WebGPT Luna" },
     selectConnector,
     insertPromptText,
     connectorIsSelected: async () => selected,

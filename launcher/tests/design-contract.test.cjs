@@ -103,15 +103,13 @@ test("normal launcher shutdown flushes the persistent ChatGPT session before clo
   assert.ok(destroy > persist, "browser views must close only after session persistence completes");
 });
 
-test("settings expose a persistent fail-closed Codex bridge switch and status indicator", () => {
-  assert.match(appSource, /api!\.setBridgeEnabled\(enabled\)/);
-  assert.match(appSource, /snapshot\.state\.bridgeEnabled \? "success" : "error"/);
-  assert.match(appSource, /body=\{copy\.bridgeRouteBody\} label=\{copy\.bridgeRoute\}/);
+test("settings do not expose a Codex routing switch", () => {
+  assert.doesNotMatch(appSource, /body=\{copy\.bridgeRouteBody\} label=\{copy\.bridgeRoute\}/);
+  assert.match(runtimeSource, /Codex routing is disabled by standalone WebGPT Luna/);
   assert.match(styles, /\.action-dot\.is-success\s*\{[^}]*background:\s*var\(--green-300\)/s);
   assert.match(styles, /\.action-dot\.is-error\s*\{[^}]*background:\s*var\(--red-300\)/s);
   assert.match(electronMain, /runtimeHost\.setBridgeEnabled\(enabled === true\)/);
-  assert.match(electronMain, /codexRestartRequired:\s*true/);
-  assert.match(i18nSource, /Turning it off restores your previous model route without deleting setup or saved credentials/);
+  assert.doesNotMatch(appSource, /Turning it off restores your previous model route/);
 });
 
 test("doctor summary never hides failed checks behind trailing healthy checks", () => {
@@ -159,20 +157,18 @@ test("MCP copy includes every required account, key, and connector instruction",
   assert.match(i18nSource, /only after this step succeeds and the tunnel is running/);
   assert.match(i18nSource, /只有此步骤成功且 Tunnel 正在运行后/);
   assert.match(appSource, /className="mcp-step-two-hint"/);
-  assert.match(i18nSource, /Connect harness is unavailable until the Codex models are installed and verified/);
-  assert.match(i18nSource, /Return to Setup, click Install models, restart Codex once/);
-  assert.match(i18nSource, /在 Codex 模型安装并验证完成前，无法连接 Harness/);
+  assert.match(i18nSource, /Connect tools is unavailable until the standalone runtime is prepared/);
+  assert.match(i18nSource, /完成独立运行时准备前，无法连接本地工具/);
   assert.match(
     appSource,
-    /snapshot\.state\.codexCatalogVerified \? copy\.mcpStepTwoHint : copy\.mcpCatalogRequired/,
+    /snapshot\.state\.coreSetupComplete \? copy\.mcpStepTwoHint : copy\.mcpCatalogRequired/,
   );
-  assert.match(appSource, /\|\| !snapshot\.state\.codexCatalogVerified/);
+  assert.match(appSource, /\|\| !snapshot\.state\.coreSetupComplete/);
   assert.match(i18nSource, /enable Developer Mode[\s\S]*?choose Tunnel[\s\S]*?set Authentication to None/);
   assert.match(i18nSource, /create a new connector[\s\S]*?exact connector name shown below/);
-  assert.match(i18nSource, /Leave the old connector untouched and create Codex Native2 as a new connector/);
-  assert.match(i18nSource, /Do not rename or refresh Codex Native/);
-  assert.match(i18nSource, /choose Allow all actions[\s\S]*?blocks command and patch calls/);
-  assert.match(i18nSource, /outer Codex harness still enforces its sandbox and approvals/);
+  assert.match(i18nSource, /Leave it untouched and create WebGPT Luna as a new connector/);
+  assert.match(i18nSource, /Do not rename or refresh the old connector/);
+  assert.match(i18nSource, /choose Allow all actions[\s\S]*?permission_mode still controls each execution/);
   assert.match(appSource, /<NoticeRow icon="alert" tone="warning">/);
   assert.doesNotMatch(appSource, /icon="spark"/);
 });
@@ -217,16 +213,16 @@ test("launcher migrates and verifies the explicit direct-turn connector identity
   assert.match(electronMain, /connectorName:\s*runtimeHost\.browserConnectorName\(\)/);
   assert.match(electronMain, /getConnectorName:\s*\(\) => runtimeHost\.browserConnectorName\(\)/);
   assert.match(appSource, /<code>\{snapshot\.connectorName\}<\/code>/);
-  assert.match(connectorIdentitySource, /CURRENT_CONNECTOR_NAME = "Codex Native2"/);
-  assert.match(connectorIdentitySource, /LEGACY_CONNECTOR_NAMES = Object\.freeze\(\["Codex Native"\]\)/);
-  assert.match(runtimeConfigSource, /CHATGPT_CONNECTOR_NAME = "Codex Native2"/);
-  assert.match(runtimeConfigSource, /LEGACY_CHATGPT_CONNECTOR_NAMES = \["Codex Native"\]/);
+  assert.match(connectorIdentitySource, /CURRENT_CONNECTOR_NAME = "WebGPT Luna"/);
+  assert.match(connectorIdentitySource, /LEGACY_CONNECTOR_NAMES = Object\.freeze\(\["Codex Native", "Codex Native2"\]\)/);
+  assert.match(runtimeConfigSource, /CHATGPT_CONNECTOR_NAME = "WebGPT Luna"/);
+  assert.match(runtimeConfigSource, /LEGACY_CHATGPT_CONNECTOR_NAMES = \["Codex Native", "Codex Native2"\]/);
   assert.match(runtimeSource, /connectorMigrationRequired[\s\S]*?isLegacyConnectorName/);
   assert.match(runtimeSource, /requireCurrentRuntimeConnectorName/);
-  assert.match(i18nSource, /Do not rename or refresh Codex Native/);
+  assert.match(i18nSource, /Do not rename or refresh the old connector/);
   assert.match(appSource, /copy\.connectorMigrationNotice/);
   for (const source of [electronMain, browserHostSource, appSource]) {
-    assert.doesNotMatch(source, /Codex Native2/);
+    assert.doesNotMatch(source, /CURRENT_CONNECTOR_NAME = "Codex Native2"/);
   }
 });
 
@@ -236,12 +232,12 @@ test("launcher refreshes persisted ChatGPT authentication before presenting setu
   assert.match(i18nSource, /checkingSignIn: "Checking saved session"/);
 });
 
-test("completed model setup remains a repeatable account-capability probe", () => {
+test("completed standalone runtime setup remains repeatable", () => {
   assert.match(appSource, /copy\.reinstall/);
   assert.match(appSource, /<SetupRow[\s\S]*?onAction=\{install\}[\s\S]*?repeatable/);
   assert.match(appSource, /complete && !repeatable/);
-  assert.match(i18nSource, /reinstall: "Reinstall models"/);
-  assert.match(i18nSource, /reinstall: "重新安装模型"/);
+  assert.match(i18nSource, /reinstall: "Refresh runtime"/);
+  assert.match(i18nSource, /reinstall: "刷新运行时"/);
   assert.match(
     electronMain,
     /!setupState\.coreSetupComplete[\s\S]*?smokePassedThisSession[\s\S]*?smokePassedForCurrentVersion\(setupState\)/,

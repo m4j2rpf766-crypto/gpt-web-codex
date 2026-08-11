@@ -1,5 +1,5 @@
-const CURRENT_CONNECTOR_NAME = "Codex Native2";
-const LEGACY_CONNECTOR_NAMES = Object.freeze(["Codex Native"]);
+const CURRENT_CONNECTOR_NAME = "WebGPT Luna";
+const LEGACY_CONNECTOR_NAMES = Object.freeze(["Codex Native", "Codex Native2"]);
 
 function validateConnectorName(value) {
   if (typeof value !== "string" || !value.trim() || value.length > 80) {

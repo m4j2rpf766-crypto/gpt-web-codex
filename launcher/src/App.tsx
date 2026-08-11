@@ -293,7 +293,7 @@ function LauncherShell({
   updateState: (state: LauncherState) => void;
 }) {
   const [surface, setSurface] = useState<Surface>(
-    snapshot.state.coreSetupComplete && snapshot.state.codexCatalogVerified ? "browser" : "setup",
+    snapshot.state.coreSetupComplete ? "browser" : "setup",
   );
   const compactAtMount = useRef(window.matchMedia(COMPACT_SIDEBAR_QUERY).matches).current;
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
@@ -304,9 +304,8 @@ function LauncherShell({
   const browserSlotRef = useCallback((node: HTMLDivElement | null) => setBrowserSlot(node), []);
   const browserSurfaceActive = surface === "browser" && !(compactSidebar && sidebarOpen);
   const needsBrowser = browser?.authenticated !== true;
-  const needsSetup = !needsBrowser
-    && (snapshot.state.coreSetupComplete !== true || snapshot.state.codexCatalogVerified !== true);
-  const mcpOptional = snapshot.state.codexCatalogVerified === true && snapshot.state.mcpSetupComplete !== true;
+  const needsSetup = !needsBrowser && snapshot.state.coreSetupComplete !== true;
+  const mcpOptional = snapshot.state.coreSetupComplete === true && snapshot.state.mcpSetupComplete !== true;
   const updateVisible = ["available", "downloading", "installing"].includes(snapshot.update.status);
   const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
   const updateVersion = "version" in snapshot.update ? snapshot.update.version : null;
@@ -531,7 +530,7 @@ function LauncherShell({
               <SidebarItem
                 active={surface === "settings"}
                 badge={snapshot.state.coreSetupComplete
-                  ? <ActionDot tone={snapshot.state.bridgeEnabled ? "success" : "error"} />
+                  ? <ActionDot tone="success" />
                   : null}
                 icon="settings"
                 label={copy.settings}
@@ -896,7 +895,7 @@ function SetupSurface({
         />
         <SetupRow
           action={snapshot.state.coreSetupComplete ? copy.reinstall : copy.install}
-          complete={snapshot.state.codexCatalogVerified === true}
+          complete={snapshot.state.coreSetupComplete === true}
           description={copy.stepInstallBody}
           disabled={busy
             || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
@@ -907,14 +906,8 @@ function SetupSurface({
         />
       </div>
 
-      {snapshot.state.codexRestartRequired ? (
-        <NoticeRow icon="alert" tone="warning">
-          {copy.restartCodex}
-        </NoticeRow>
-      ) : null}
-
       <SectionHeading label="MCP" meta={copy.optional} spaced />
-      <button className="next-surface-row" disabled={!snapshot.state.codexCatalogVerified} onClick={showMcp} type="button">
+      <button className="next-surface-row" disabled={!snapshot.state.coreSetupComplete} onClick={showMcp} type="button">
         <Icon name="mcp" />
         <span>
           <strong>{copy.mcpTitle}</strong>
@@ -1016,7 +1009,7 @@ function McpSurface({
 
   return (
     <ContentSurface fit subtitle={copy.mcpSubtitle} title="MCP">
-      {!snapshot.state.codexCatalogVerified ? (
+      {!snapshot.state.coreSetupComplete ? (
         <NoticeRow icon="setup" tone="warning">{copy.mcpCatalogRequired}</NoticeRow>
       ) : null}
 
@@ -1127,7 +1120,7 @@ function McpSurface({
             ) : null}
             {step === 1 ? (
               <p className="mcp-step-two-hint">
-                {snapshot.state.codexCatalogVerified ? copy.mcpStepTwoHint : copy.mcpCatalogRequired}
+                {snapshot.state.coreSetupComplete ? copy.mcpStepTwoHint : copy.mcpCatalogRequired}
               </p>
             ) : null}
             {step === 2 ? (
@@ -1168,7 +1161,7 @@ function McpSurface({
           <PrimaryButton
             disabled={
               busy
-              || !snapshot.state.codexCatalogVerified
+              || !snapshot.state.coreSetupComplete
               || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
             }
             onClick={() => void install()}
@@ -1319,13 +1312,6 @@ function SettingsSurface({
             onChange={(checked) => void api!.setAutostart(checked)
               .then((result) => updateState(result.state))
               .catch((cause) => setError(messageOf(cause)))}
-          />
-        </SettingRow>
-        <SettingRow body={copy.bridgeRouteBody} label={copy.bridgeRoute}>
-          <Switch
-            checked={snapshot.state.bridgeEnabled}
-            disabled={busy || snapshot.state.coreSetupComplete !== true}
-            onChange={(checked) => void setBridgeEnabled(checked)}
           />
         </SettingRow>
         <SettingRow body={copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>

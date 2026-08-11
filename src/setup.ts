@@ -18,7 +18,6 @@ import {
   loginToChatGpt,
   storedBrowserLoginCapabilities,
 } from "./browser-login";
-import { installCodexIntegration, preflightCodexIntegration } from "./codex-integration";
 import { inspectLauncherBrowserHost } from "./launcher-browser-host";
 import {
   assertServiceIdle,
@@ -41,7 +40,6 @@ export interface SetupOptions {
   appName?: string;
   forceLogin?: boolean;
   autoApproveToolCalls?: boolean;
-  replaceCodexRoute?: boolean;
   restartService?: boolean;
   acknowledgedUnofficial?: boolean;
   tunnelId?: string;
@@ -55,7 +53,7 @@ export interface SetupResult {
   loginCreated: boolean;
   serviceLoaded: boolean;
   tunnelReady: boolean | null;
-  codexRestartRequired: true;
+  codexRestartRequired: false;
   connectorSetupRequired: boolean;
 }
 
@@ -272,9 +270,6 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       + "Use the Codex Web GPT launcher on Windows or Linux.",
     );
   }
-  preflightCodexIntegration(config, {
-    replaceExistingRoute: options.replaceCodexRoute,
-  });
   const refreshTunnelWorker = tunnelWorkerRuntimeChanged(existing, config);
   if (existing && options.restartService) config.controlToken = randomBytes(32).toString("base64url");
   const beforeService = getServiceStatus();
@@ -405,17 +400,13 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     launcherOwned && existing && existing.browserHost !== "launcher",
   );
   if (!migratingTerminalRuntime) removeLegacyRuntimeArtifacts(config);
-  installCodexIntegration(config, {
-    replaceExistingRoute: options.replaceCodexRoute,
-  });
-
   return {
     mode: config.mode,
     configPath: getConfigPath(),
     loginCreated,
     serviceLoaded: launcherOwned ? false : getServiceStatus().loaded,
     tunnelReady,
-    codexRestartRequired: true,
+    codexRestartRequired: false,
     connectorSetupRequired: config.mode === "full",
   };
 }

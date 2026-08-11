@@ -8,12 +8,6 @@ import { stdin, stdout } from "node:process";
 import { checkBrowserEngine, loginToChatGpt } from "./browser-login";
 import { CHATGPT_CONNECTOR_NAME, defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
 import { inspectLauncherBrowserHost, readLauncherBrowserHostDescriptor } from "./launcher-browser-host";
-import {
-  activateCodexIntegration,
-  deactivateCodexIntegration,
-  inspectCodexIntegration,
-  uninstallCodexIntegration,
-} from "./codex-integration";
 import { formatDoctorReport, runDoctor } from "./doctor";
 import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { runCommand } from "./process";
@@ -33,10 +27,9 @@ Usage:
   codex-chatgpt-web setup --full --tunnel-id ID --runtime-key-file PATH [options]
   codex-chatgpt-web login
   codex-chatgpt-web doctor [--json]
-  codex-chatgpt-web route <status|connect|disconnect>
   codex-chatgpt-web browser check
   codex-chatgpt-web serve
-  codex-chatgpt-web mcp [--broker-socket PATH]
+  codex-chatgpt-web mcp [--state-path PATH]
   codex-chatgpt-web service <status|install|start|restart|stop|cancel-turns>
   codex-chatgpt-web tunnel <status|start|restart|stop|key-import>
   codex-chatgpt-web open <tunnels|runtime-keys|connectors>
@@ -54,7 +47,6 @@ Setup options:
   --app-name NAME              ChatGPT connector name (default: ${CHATGPT_CONNECTOR_NAME})
   --tunnel-id ID               Existing OpenAI tunnel id (full mode)
   --runtime-key-file PATH      File containing a Tunnels Read+Use runtime key
-  --replace-codex-route        Reversibly replace an existing openai_base_url
   --restart-service            Explicitly restart this project's daemon after an update
   --login                      Refresh the stored ChatGPT login even if one exists
   --auto-approve-tool-calls    Opt in to per-call browser clicks on "Allow once" prompts
@@ -185,7 +177,6 @@ async function setupCommand(args: string[]): Promise<void> {
   if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
   options.forceLogin = takeFlag(args, "--login");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
-  options.replaceCodexRoute = takeFlag(args, "--replace-codex-route");
   options.restartService = takeFlag(args, "--restart-service");
   assertNoArgs(args);
 
@@ -235,25 +226,8 @@ async function doctorCommand(args: string[]): Promise<void> {
 }
 
 async function routeCommand(args: string[]): Promise<void> {
-  const action = args.shift() ?? "status";
   assertNoArgs(args);
-  const result = action === "status"
-    ? (() => {
-        const status = inspectCodexIntegration();
-        return {
-          installed: status.installed,
-          active: status.active,
-          ...(status.routeUrl ? { routeUrl: status.routeUrl } : {}),
-          errors: status.errors,
-        };
-      })()
-    : action === "connect"
-      ? activateCodexIntegration()
-      : action === "disconnect"
-        ? deactivateCodexIntegration()
-        : undefined;
-  if (!result) throw new Error(`Unknown route action: ${action}`);
-  stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  throw new Error("Codex routing is intentionally unsupported: standalone WebGPT Luna never reads or modifies Codex routing configuration");
 }
 
 async function serviceCommand(args: string[]): Promise<void> {
@@ -348,7 +322,6 @@ async function uninstallCommand(args: string[]): Promise<void> {
     stopTunnel(config);
   }
   if (config && process.platform === "darwin" && !launcherRuntimeStopped) await uninstallService(config);
-  uninstallCodexIntegration();
   if (!keepData) rmSync(getConfigDir(), { recursive: true, force: true });
   stdout.write(keepData ? "Uninstalled; private application data was preserved.\n" : "Uninstalled and removed private application data.\n");
 }

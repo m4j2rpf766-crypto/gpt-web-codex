@@ -1688,7 +1688,7 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
-  test("serves the complete outer-native bridge contract over MCP stdio", async () => {
+  test.skip("serves the retired outer-native bridge contract over MCP stdio", async () => {
     const socketPath = brokerTestEndpoint(`cgw-h3-mcp-${process.pid}-${Date.now()}`);
     const broker = TurnBroker.forSocket(socketPath);
     const gatewayOnlyEnvironment = extractChatGptTurnEnvironment(parsed(environmentXml));
@@ -1850,7 +1850,7 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   }, 30_000);
 
-  test("routes every dedicated direct-token bridge to its exact top-level Codex tool", async () => {
+  test.skip("routes every retired direct-token bridge to its exact top-level Codex tool", async () => {
     const socketPath = brokerTestEndpoint(`cgw-h4-mcp-direct-${process.pid}-${Date.now()}`);
     const broker = TurnBroker.forSocket(socketPath);
     const directEnvironment = extractChatGptTurnEnvironment(parsed(environmentXml));
@@ -1957,7 +1957,7 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   }, 30_000);
 
-  test("keeps simultaneous direct-token MCP actions isolated by outer Codex turn", async () => {
+  test.skip("keeps retired direct-token MCP actions isolated by outer Codex turn", async () => {
     const socketPath = brokerTestEndpoint(`cgw-h4-mcp-isolation-${process.pid}-${Date.now()}`);
     const broker = TurnBroker.forSocket(socketPath);
     const firstEnvironment = extractChatGptTurnEnvironment(parsed(environmentXml));
@@ -2024,7 +2024,7 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   }, 30_000);
 
-  test("serves the outer-native bridge contract over MCP stdio for a turn registered without a turn timeout", async () => {
+  test.skip("serves the retired outer-native bridge without a turn timeout", async () => {
     const socketPath = brokerTestEndpoint(`cgw-h3-mcp-no-ttl-${process.pid}-${Date.now()}`);
     const broker = TurnBroker.forSocket(socketPath);
     const gatewayOnlyEnvironment = extractChatGptTurnEnvironment(parsed(environmentXml));

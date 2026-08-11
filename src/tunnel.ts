@@ -183,12 +183,13 @@ function tunnelCommandQuoted(value: string): string {
 }
 
 export function mcpCommand(config: AppConfig, platform = process.platform): string {
+  const statePath = join(getConfigDir(), "standalone", "state.json");
   if (platform === "win32") {
-    return [...config.runtimeCommand, "mcp", "--broker-socket", config.brokerSocketPath]
+    return [...config.runtimeCommand, "mcp", "--state-path", statePath]
       .map(tunnelCommandQuoted)
       .join(" ");
   }
-  return [...config.runtimeCommand, "mcp", "--broker-socket", config.brokerSocketPath].map(shellQuote).join(" ");
+  return [...config.runtimeCommand, "mcp", "--state-path", statePath].map(shellQuote).join(" ");
 }
 
 function tunnel(config: AppConfig): TunnelConfig {

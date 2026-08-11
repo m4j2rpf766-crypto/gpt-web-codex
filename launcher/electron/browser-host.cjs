@@ -10,14 +10,21 @@ const {
 const { validateConnectorName } = require("./connector-identity.cjs");
 const { processRunning } = require("./process-tree.cjs");
 const {
+  CHATGPT_ORIGIN,
+  LUNA_TOOL_BINDING_ACK,
+  NORMAL_CHAT_URL,
+  SESSION_MEMORY_BOUNDARY_ACK,
+  memoryBoundaryPrompt,
+  toolBindingPrompt,
+  webSessionIdFromUrl,
+} = require("./web-session.cjs");
+const {
   browserViewVisible,
   constrainBrowserBounds,
   navigateBrowser,
   readBrowserNavigationState,
 } = require("./browser-state.cjs");
 
-const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
-const CHATGPT_ORIGIN = "https://chatgpt.com";
 const IDLE_BROWSER_URL = "about:blank#codex-web-gpt-browser-host";
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
 const MAX_BROWSER_TABS = 5;
@@ -109,7 +116,7 @@ function allowedAuthUrl(value) {
   return AUTH_PROVIDER_HOSTS.has(parsed.hostname);
 }
 
-function isTemporaryChatUrl(value) {
+function isNormalChatUrl(value) {
   let parsed;
   try {
     parsed = new URL(value);
@@ -117,8 +124,8 @@ function isTemporaryChatUrl(value) {
     return false;
   }
   return parsed.origin === CHATGPT_ORIGIN
-    && parsed.pathname === "/"
-    && parsed.searchParams.get("temporary-chat") === "true";
+    && (parsed.pathname === "/" || webSessionIdFromUrl(value) !== null)
+    && parsed.searchParams.get("temporary-chat") !== "true";
 }
 
 function isChatGptBackendUrl(value) {
@@ -299,6 +306,8 @@ class BrowserHost {
     this.cloudflareChallengeRecoveryDelayMs = CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS;
     this.cloudflareChallengeRecoverySettleMs = CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS;
     this.viewportCssKey = null;
+    this.sessionBootstrapOperation = null;
+    this.restoringSession = false;
     this.homeNavigationTimeout = null;
     this.turnLeaseSweep = setInterval(() => this.reapExpiredTurnTabs(), TURN_HEARTBEAT_SWEEP_MS);
     this.turnLeaseSweep.unref?.();
@@ -573,7 +582,14 @@ class BrowserHost {
       this.setState({ title: typeof title === "string" && title.trim() ? title.trim() : "ChatGPT" });
     });
     contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
-      if (mainFrame) this.setState({ url });
+      if (mainFrame) {
+        this.setState({ url });
+        if (webSessionIdFromUrl(url)) {
+          void contents.executeJavaScript(
+            `localStorage.setItem("webgpt.last_conversation_url", ${JSON.stringify(url)})`, true,
+          ).catch(() => {});
+        }
+      }
     });
     contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {
       if (!mainFrame || errorCode === -3) return;
@@ -680,10 +696,10 @@ class BrowserHost {
     // A navigation from the idle host already creates a fresh ChatGPT document. Reload only an
     // existing Temporary Chat document; doing both back-to-back races the helper against a second
     // SPA bootstrap and is why first setup/verification attempts timed out while the retry worked.
-    if (isTemporaryChatUrl(this.view.webContents.getURL())) {
+    if (isNormalChatUrl(this.view.webContents.getURL())) {
       await this.hardRefreshHome();
     } else {
-      await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      await this.view.webContents.loadURL(NORMAL_CHAT_URL);
     }
     await this.waitForAuthenticated(60_000);
   }
@@ -953,10 +969,24 @@ class BrowserHost {
   async reveal() {
     this.show();
     if (!this.selectedTurnTab() && this.view.webContents.getURL() === IDLE_BROWSER_URL) {
-      await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      await this.openLastConversationOrHome();
       await this.probeAuthentication();
     }
     return this.snapshot();
+  }
+
+  async openLastConversationOrHome() {
+    const contents = this.view.webContents;
+    this.restoringSession = true;
+    try {
+      await contents.loadURL(NORMAL_CHAT_URL);
+      const lastUrl = await contents.executeJavaScript(
+        'localStorage.getItem("webgpt.last_conversation_url")', true,
+      ).catch(() => null);
+      if (typeof lastUrl === "string" && webSessionIdFromUrl(lastUrl)) await contents.loadURL(lastUrl);
+    } finally {
+      this.restoringSession = false;
+    }
   }
 
   hide() {
@@ -1190,7 +1220,7 @@ class BrowserHost {
         for (const cookie of state.cookies) await contents.session.cookies.set(cookie);
         contents.session.flushStorageData();
         await contents.session.cookies.flushStore();
-        await contents.loadURL(TEMPORARY_CHAT_URL);
+        await contents.loadURL(NORMAL_CHAT_URL);
         if (state.localStorage.length > 0) {
           const entries = javaScriptLiteral(state.localStorage);
           await contents.executeJavaScript(`(() => {
@@ -1199,7 +1229,7 @@ class BrowserHost {
             }
             for (const entry of ${entries}) localStorage.setItem(entry.name, entry.value);
           })()`, true);
-          await contents.loadURL(TEMPORARY_CHAT_URL);
+          await contents.loadURL(NORMAL_CHAT_URL);
         }
         browser = await this.waitForAuthenticated(60_000);
         if (browser?.authenticated !== true) {
@@ -1251,7 +1281,7 @@ class BrowserHost {
         message: "Signing out of ChatGPT",
         status: "loading",
       });
-      await contents.loadURL(TEMPORARY_CHAT_URL);
+      await contents.loadURL(NORMAL_CHAT_URL);
       const browser = await this.probeAuthentication();
       if (browser.authenticated) {
         throw new Error("ChatGPT session remained authenticated after local session data was cleared");
@@ -1266,8 +1296,8 @@ class BrowserHost {
   async refreshAuthentication() {
     return await this.withManualOperation("session refresh", async () => {
       this.setState({ status: "loading", message: "Checking saved ChatGPT session" });
-      if (!isTemporaryChatUrl(this.view.webContents.getURL())) {
-        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      if (!isNormalChatUrl(this.view.webContents.getURL())) {
+        await this.view.webContents.loadURL(NORMAL_CHAT_URL);
       }
       return await this.probeAuthentication();
     });
@@ -1302,6 +1332,13 @@ class BrowserHost {
           : { status: "ready", message: "ChatGPT is ready" };
       this.setState({ ...availability, authenticated: true, url });
       if (!wasAuthenticated) this.logger.info("browser.authenticated", { url });
+      if (!this.activeTraceId && !this.manualOperation && !this.restoringSession) {
+        void this.ensureSessionBootstrap().catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error("browser.session_bootstrap_failed", { message });
+          this.setState({ status: "error", message: `Chat session bootstrap failed: ${message}`, loading: false });
+        });
+      }
     } else {
       const loaded = result.readyState === "complete";
       this.setState({
@@ -1312,6 +1349,83 @@ class BrowserHost {
       });
     }
     return this.snapshot();
+  }
+
+  async submitVisibleHomePrompt(text) {
+    const payload = JSON.stringify(text);
+    const outcome = await this.view.webContents.executeJavaScript(`(() => {
+      const composer = ${visibleElementScript(COMPOSER_SELECTOR)};
+      if (!composer) return { ok: false, reason: "composer_missing" };
+      composer.focus();
+      if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(composer), "value")?.set;
+        setter?.call(composer, ${payload});
+      } else {
+        composer.textContent = "";
+        document.execCommand("insertText", false, ${payload});
+      }
+      composer.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${payload} }));
+      return { ok: true };
+    })()`, true);
+    if (!outcome?.ok) throw new Error(`Could not submit visible ChatGPT bootstrap prompt (${outcome?.reason || "unknown"})`);
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      const sent = await this.view.webContents.executeJavaScript(`(() => {
+        const composer = ${visibleElementScript(COMPOSER_SELECTOR)};
+        const send = composer?.closest("form")?.querySelector('[data-testid="send-button"]');
+        if (!(send instanceof HTMLButtonElement) || send.disabled) return false;
+        send.click();
+        return true;
+      })()`, true).catch(() => false);
+      if (sent) return;
+      await sleep(100);
+    }
+    throw new Error("ChatGPT bootstrap prompt did not become ready to send");
+  }
+
+  async waitForVisibleAcknowledgement(acknowledgement, timeoutMs = 180_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const found = await this.view.webContents.executeJavaScript(
+        `[...document.querySelectorAll('[data-message-author-role="assistant"]')].some(element => (element.innerText || element.textContent || "").includes(${JSON.stringify(acknowledgement)}))`,
+        true,
+      ).catch(() => false);
+      if (found) return;
+      await sleep(500);
+    }
+    throw new Error(`ChatGPT did not acknowledge ${acknowledgement}`);
+  }
+
+  async ensureSessionBootstrap() {
+    if (this.sessionBootstrapOperation) return await this.sessionBootstrapOperation;
+    this.sessionBootstrapOperation = (async () => {
+      const contents = this.view.webContents;
+      let webSessionId = webSessionIdFromUrl(contents.getURL());
+      if (webSessionId) {
+        const alreadyBound = await contents.executeJavaScript(
+          `localStorage.getItem(${JSON.stringify(`webgpt.boundary.${webSessionId}`)}) === "1"`, true,
+        ).catch(() => false);
+        if (alreadyBound) return;
+      }
+      this.setState({ status: "loading", message: "Declaring this chat's memory boundary", loading: false });
+      await this.submitVisibleHomePrompt(memoryBoundaryPrompt());
+      await this.waitForVisibleAcknowledgement(SESSION_MEMORY_BOUNDARY_ACK);
+      const deadline = Date.now() + 60_000;
+      while (!webSessionId && Date.now() < deadline) {
+        webSessionId = webSessionIdFromUrl(contents.getURL());
+        if (!webSessionId) await sleep(250);
+      }
+      if (!webSessionId) throw new Error("ChatGPT did not assign a stable /c/<conversation-id> URL");
+      await this.submitVisibleHomePrompt(toolBindingPrompt(webSessionId));
+      await this.waitForVisibleAcknowledgement(LUNA_TOOL_BINDING_ACK);
+      await contents.executeJavaScript(
+        `localStorage.setItem(${JSON.stringify(`webgpt.boundary.${webSessionId}`)}, "1")`, true,
+      );
+      this.logger.info("browser.session_bootstrap_completed", { webSessionId });
+      this.setState({ status: "ready", message: "ChatGPT is ready", authenticated: true, url: contents.getURL() });
+    })();
+    try { await this.sessionBootstrapOperation; }
+    finally { this.sessionBootstrapOperation = null; }
   }
 
   async waitForAuthenticated(timeoutMs = 180_000) {
@@ -1481,7 +1595,7 @@ module.exports = {
   CHATGPT_VIEWPORT_CSS,
   IDLE_BROWSER_URL,
   isChatGptCloudflareChallengeResponse,
-  isTemporaryChatUrl,
-  TEMPORARY_CHAT_URL,
+  isNormalChatUrl,
+  NORMAL_CHAT_URL,
   validateChatGptStorageState,
 };

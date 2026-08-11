@@ -830,7 +830,7 @@ class RuntimeSupervisor {
   }
 
   async runTunnelConnectCommand(config) {
-    const invocation = this.runtimeCommand(["mcp", "--broker-socket", config.brokerSocketPath]);
+    const invocation = this.runtimeCommand(["mcp", "--state-path", path.join(this.coreHome, "standalone", "state.json")]);
     return await this.runTunnelCommand(
       config,
       managedTunnelConnectArgs(config, invocation),

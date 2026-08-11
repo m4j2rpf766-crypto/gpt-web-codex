@@ -88,11 +88,12 @@ test("user-home expansion accepts native Unix and Windows separators", () => {
 
 test("the direct-turn connector identity migrates known legacy setup without overwriting custom names", () => {
   expect(defaultConfig("full").appName).toBe(CHATGPT_CONNECTOR_NAME);
-  expect(resolveSetupConnectorName("Codex Native")).toBe("Codex Native2");
+  expect(resolveSetupConnectorName("Codex Native")).toBe("WebGPT Luna");
+  expect(resolveSetupConnectorName("Codex Native2")).toBe("WebGPT Luna");
   expect(resolveSetupConnectorName("Team Codex Harness")).toBe("Team Codex Harness");
   expect(resolveSetupConnectorName(undefined, "Team Codex Harness")).toBe("Team Codex Harness");
   expect(() => resolveSetupConnectorName(undefined, "Codex Native"))
-    .toThrow(/requires a newly created connector named "Codex Native2"/);
+    .toThrow(/requires a newly created connector named "WebGPT Luna"/);
 });
 
 test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", () => {

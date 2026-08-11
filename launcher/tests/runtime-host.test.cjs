@@ -57,7 +57,7 @@ function hostFor(existingConfig) {
 }
 
 test("core setup preserves an existing full-harness installation", async () => {
-  const fixture = hostFor({ mode: "full", appName: "Codex Native2" });
+  const fixture = hostFor({ mode: "full", appName: "WebGPT Luna" });
   const result = await fixture.host.setupCore();
   assert.equal(result.mode, "full");
   assert.deepEqual(fixture.invocation().args, [
@@ -66,18 +66,17 @@ test("core setup preserves an existing full-harness installation", async () => {
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
     "--refresh-account-capabilities",
-    "--replace-codex-route",
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
-    "Codex Native2",
+    "WebGPT Luna",
   ]);
 });
 
 test("core setup replaces the known legacy connector identity with the direct-turn identity", async () => {
   const fixture = hostFor({ mode: "full", appName: "Codex Native" });
   await fixture.host.setupCore();
-  assert.deepEqual(fixture.invocation().args.slice(-2), ["--app-name", "Codex Native2"]);
+  assert.deepEqual(fixture.invocation().args.slice(-2), ["--app-name", "WebGPT Luna"]);
 });
 
 test("core setup starts in browser-only mode when no installation exists", async () => {
@@ -86,7 +85,7 @@ test("core setup starts in browser-only mode when no installation exists", async
   assert.equal(result.mode, "browser-only");
   assert.deepEqual(fixture.invocation().args.slice(0, 2), ["setup", "--browser-only"]);
   assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), true);
-  assert.equal(fixture.invocation().args.includes("--replace-codex-route"), true);
+  assert.equal(fixture.invocation().args.includes("--replace-codex-route"), false);
   assert.deepEqual(fixture.invocation().args.slice(-2), ["--chrome", "/usr/bin/chromium"]);
 });
 
@@ -181,7 +180,7 @@ test("launcher update transaction upgrades its owned full runtime with saved con
   const fixture = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: "WebGPT Luna",
     releaseVersion: "1.1.1",
   });
   fixture.host.bridgeStatus = async () => ({ installed: true, active: true, errors: [] });
@@ -196,12 +195,12 @@ test("launcher update transaction upgrades its owned full runtime with saved con
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
-    "Codex Native2",
+    "WebGPT Luna",
   ]);
   assert.deepEqual(result, {
     updated: true,
     mode: "full",
-    bridgeEnabled: true,
+    bridgeEnabled: false,
     fromVersion: "1.1.1",
     toVersion: "1.1.3",
     connectorMigrated: false,
@@ -228,14 +227,14 @@ test("launcher migrates the legacy connector identity even when the release vers
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
-    "Codex Native2",
+    "WebGPT Luna",
   ]);
   assert.equal(result.updated, true);
   assert.equal(result.connectorMigrated, true);
   assert.equal(result.fromVersion, result.toVersion);
 });
 
-test("launcher update transaction preserves a deliberately disconnected Codex route", async () => {
+test("launcher update transaction remains standalone without touching Codex routing", async () => {
   const fixture = hostFor({
     mode: "browser-only",
     browserHost: "launcher",
@@ -251,7 +250,7 @@ test("launcher update transaction preserves a deliberately disconnected Codex ro
   const result = await fixture.host.upgradeManagedRuntime();
 
   assert.equal(result.bridgeEnabled, false);
-  assert.equal(disabled, 1);
+  assert.equal(disabled, 0);
 });
 
 test("launcher update transaction leaves current and externally owned runtimes unchanged", async () => {
@@ -259,7 +258,7 @@ test("launcher update transaction leaves current and externally owned runtimes u
   const currentFull = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: "WebGPT Luna",
     releaseVersion: "1.1.3",
   });
   const external = hostFor({ mode: "browser-only", browserHost: "managed-chrome", releaseVersion: "1.1.1" });
@@ -278,7 +277,7 @@ test("MCP setup reuses valid private credentials without exposing or rewriting t
   fs.writeFileSync(keyPath, "saved-private-runtime-key\n", { mode: 0o600 });
   const fixture = hostFor({
     mode: "full",
-    appName: "Codex Native2",
+    appName: "WebGPT Luna",
     tunnel: {
       tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
       runtimeKeyFile: keyPath,
@@ -293,13 +292,12 @@ test("MCP setup reuses valid private credentials without exposing or rewriting t
       "--browser-host-descriptor",
       "/runtime/launcher-browser.json",
       "--app-name",
-      "Codex Native2",
-      "--replace-codex-route",
+      "WebGPT Luna",
       "--acknowledge-unofficial",
       "--restart-service",
     ]);
     assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), false);
-    assert.equal(fixture.invocation().args.includes("--replace-codex-route"), true);
+    assert.equal(fixture.invocation().args.includes("--replace-codex-route"), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -319,7 +317,7 @@ test("new MCP setup uses the explicit default connector name", async () => {
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
     "--app-name",
-    "Codex Native2",
+    "WebGPT Luna",
   ]);
 });
 
@@ -379,21 +377,21 @@ function bridgeFixture({ active }) {
   return { calls, host, supervisor };
 }
 
-test("bridge connection starts a healthy runtime before routing Codex to it", async () => {
+test.skip("retired bridge connection starts a healthy runtime before routing Codex to it", async () => {
   const fixture = bridgeFixture({ active: false });
   const result = await fixture.host.setBridgeEnabled(true);
   assert.equal(result.active, true);
   assert.deepEqual(fixture.calls, ["route status", "runtime:start", "route connect"]);
 });
 
-test("bridge disconnection proves idleness and stops the runtime before restoring the prior route", async () => {
+test.skip("retired bridge disconnection proves idleness and stops the runtime", async () => {
   const fixture = bridgeFixture({ active: true });
   const result = await fixture.host.setBridgeEnabled(false);
   assert.equal(result.active, false);
   assert.deepEqual(fixture.calls, ["route status", "runtime:stop", "route disconnect"]);
 });
 
-test("bridge connection rejects a route command that did not reach the requested state", async () => {
+test.skip("retired bridge connection rejects an incomplete route command", async () => {
   const fixture = bridgeFixture({ active: false });
   fixture.host.run = async (_name, args) => {
     const action = args.join(" ");
@@ -407,7 +405,7 @@ test("bridge connection rejects a route command that did not reach the requested
   assert.deepEqual(fixture.calls, ["route status", "runtime:start", "route connect", "runtime:stop"]);
 });
 
-test("bridge disconnection restarts the existing runtime if restoring the prior route fails", async () => {
+test.skip("retired bridge disconnection recovers after route failure", async () => {
   const fixture = bridgeFixture({ active: true });
   fixture.host.run = async (_name, args) => {
     const action = args.join(" ");
@@ -421,14 +419,14 @@ test("bridge disconnection restarts the existing runtime if restoring the prior 
   assert.deepEqual(fixture.calls, ["route status", "runtime:stop", "route disconnect", "runtime:start"]);
 });
 
-test("startup recovery can restore the Codex route without requiring a healthy local runtime", async () => {
+test.skip("retired startup recovery can restore the Codex route", async () => {
   const fixture = bridgeFixture({ active: true });
   const result = await fixture.host.restoreBridgeRoute("runtime-start-fail-safe");
   assert.equal(result.active, false);
   assert.deepEqual(fixture.calls, ["route status", "route disconnect"]);
 });
 
-test("failed runtime cleanup during removal still restores the previous Codex route", async () => {
+test.skip("retired runtime cleanup restores the previous Codex route", async () => {
   const calls = [];
   const config = { mode: "full", browserHost: "launcher", releaseVersion: "1.1.2" };
   const host = new RuntimeHost({
@@ -465,13 +463,13 @@ test("failed runtime cleanup during removal still restores the previous Codex ro
 });
 
 test("connector verification uses the current identity and rejects a legacy local runtime", () => {
-  const full = hostFor({ mode: "full", appName: "Codex Native2" });
-  assert.equal(full.host.mcpConnectorName(), "Codex Native2");
-  assert.equal(full.host.browserConnectorName(), "Codex Native2");
+  const full = hostFor({ mode: "full", appName: "WebGPT Luna" });
+  assert.equal(full.host.mcpConnectorName(), "WebGPT Luna");
+  assert.equal(full.host.browserConnectorName(), "WebGPT Luna");
   const defaultName = hostFor(null);
   assert.equal(defaultName.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   const legacyFull = hostFor({ mode: "full", appName: "Codex Native" });
-  assert.equal(legacyFull.host.browserConnectorName(), "Codex Native2");
+  assert.equal(legacyFull.host.browserConnectorName(), "WebGPT Luna");
   assert.throws(
     () => legacyFull.host.mcpConnectorName(),
     /still targets legacy ChatGPT connector.*create that connector as a new ChatGPT plugin/,
@@ -480,7 +478,7 @@ test("connector verification uses the current identity and rejects a legacy loca
   assert.throws(() => invalidFull.host.mcpConnectorName(), /Connector name is invalid/);
   assert.throws(() => invalidFull.host.browserConnectorName(), /Connector name is invalid/);
   const browserOnly = hostFor({ mode: "browser-only", appName: "Codex Native" });
-  assert.equal(browserOnly.host.browserConnectorName(), "Codex Native2");
+  assert.equal(browserOnly.host.browserConnectorName(), "WebGPT Luna");
   assert.throws(() => browserOnly.host.mcpConnectorName(), /MCP runtime is not configured/);
 });
 
@@ -507,7 +505,7 @@ test("launcher-controlled CLI operations use the live descriptor token", () => {
   }
 });
 
-test("failed first-time setup removes its route before restoring the unconfigured state", async () => {
+test.skip("retired first-time setup removes its route", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-first-setup-rollback-"));
   const coreHome = path.join(root, "core");
   const codexHome = path.join(root, "codex");
