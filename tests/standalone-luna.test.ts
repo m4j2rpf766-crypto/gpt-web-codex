@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCodexInvocation } from "../src/standalone/codex-command";
@@ -238,11 +238,27 @@ test("direct files enforce the disclosed workspace and permission mode", () => {
   try {
     const tools = new DirectToolService();
     tools.write("hello.txt", "hello", workspace, "workspace-write");
-    expect(tools.read("hello.txt", workspace, "workspace-write").text).toBe("hello");
+    const textFile = tools.read("hello.txt", workspace, "workspace-write");
+    expect("text" in textFile ? textFile.text : null).toBe("hello");
     expect(tools.search("hell", ".", workspace, "workspace-write").matches[0]?.line).toBe(1);
     expect(() => tools.write("blocked.txt", "x", workspace, "read-only")).toThrow("read-only");
     expect(() => resolveScopedPath("..\\outside.txt", workspace, "workspace-write")).toThrow("outside");
     expect(resolveScopedPath("..\\outside.txt", workspace, "danger-full-access")).toBe(join(root, "outside.txt"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("direct file reads preserve supported images as bounded native content", () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-image-read-"));
+  const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  try {
+    writeFileSync(join(root, "pixel.png"), image);
+    const tools = new DirectToolService();
+    expect(tools.read("pixel.png", root, "read-only")).toEqual({
+      path: join(root, "pixel.png"), mimeType: "image/png", data: image.toString("base64"), bytes: image.length,
+    });
+    expect(() => tools.read("pixel.png", root, "read-only", 200_000, image.length - 1)).toThrow("transfer limit");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -270,6 +286,35 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
     });
     expect(binding.isError).not.toBe(true);
     expect(JSON.stringify(binding.structuredContent)).toContain("conversation-standalone-123");
+  } finally {
+    await client.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("standalone MCP file_read transmits an image content block without base64 duplication", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-mcp-image-"));
+  const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  const statePath = join(root, "state.json");
+  writeFileSync(join(root, "pixel.png"), image);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["src/cli.ts", "mcp", "--state-path", statePath],
+    cwd: process.cwd(),
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "webgpt-image-test", version: "1.0.0" });
+  try {
+    await client.connect(transport);
+    const output = await client.callTool({
+      name: "file_read",
+      arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
+    });
+    expect(output.content).toEqual([
+      { type: "text", text: JSON.stringify({ path: join(root, "pixel.png"), mime_type: "image/png", bytes: image.length }) },
+      { type: "image", data: image.toString("base64"), mimeType: "image/png" },
+    ]);
+    expect(JSON.stringify(output.structuredContent)).not.toContain(image.toString("base64"));
   } finally {
     await client.close();
     rmSync(root, { recursive: true, force: true });

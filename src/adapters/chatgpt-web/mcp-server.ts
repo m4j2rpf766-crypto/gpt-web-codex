@@ -17,6 +17,18 @@ function result(value: Record<string, unknown>, isError = false) {
   };
 }
 
+function fileReadResult(value: ReturnType<DirectToolService["read"]>) {
+  if (!("data" in value)) return result({ ...value });
+  const metadata = { path: value.path, mime_type: value.mimeType, bytes: value.bytes };
+  return {
+    content: [
+      { type: "text" as const, text: JSON.stringify(metadata) },
+      { type: "image" as const, data: value.data, mimeType: value.mimeType },
+    ],
+    structuredContent: metadata,
+  };
+}
+
 export async function runChatGptMcpServer(options: { statePath?: string } = {}): Promise<void> {
   const jobs = new LunaJobManager(new LunaStateStore(options.statePath));
   const direct = new DirectToolService();
@@ -86,11 +98,11 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
   }, async ({ web_session_id }) => result({ binding: jobs.store.ensureBinding(web_session_id) }));
 
   server.registerTool("file_read", {
-    title: "Read a local text file",
-    description: "Read a file directly. The resolved path and disclosed workspace are checked unless full access is selected.",
-    inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_chars: z.number().int().min(1).max(1_000_000).default(200_000) },
+    title: "Read a local text file or image",
+    description: "Read text directly or transfer a PNG, JPEG, GIF, or WebP image as a native MCP image content block so ChatGPT can inspect it. The resolved path and disclosed workspace are checked unless full access is selected. Images default to a 10 MB transfer limit and never appear as base64 text.",
+    inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_chars: z.number().int().min(1).max(1_000_000).default(200_000), max_image_bytes: z.number().int().min(1).max(20_000_000).default(10_000_000) },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async input => result(direct.read(input.path, input.workspace_path, input.permission_mode, input.max_chars)));
+  }, async input => fileReadResult(direct.read(input.path, input.workspace_path, input.permission_mode, input.max_chars, input.max_image_bytes)));
 
   server.registerTool("file_list", {
     title: "List a local directory",

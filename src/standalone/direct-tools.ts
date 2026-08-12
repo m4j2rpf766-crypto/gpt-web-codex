@@ -5,6 +5,33 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { LunaSandbox } from "./types";
 import { terminateOwnedProcessTree } from "./process-tree";
 
+const MAX_DIRECT_IMAGE_BYTES = 20_000_000;
+
+export interface DirectTextFileRead {
+  path: string;
+  text: string;
+  truncated: boolean;
+}
+
+export interface DirectImageFileRead {
+  path: string;
+  mimeType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  data: string;
+  bytes: number;
+}
+
+function imageMimeType(bytes: Buffer): DirectImageFileRead["mimeType"] | null {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
+  if (bytes.length >= 12
+    && bytes.subarray(0, 4).toString("ascii") === "RIFF"
+    && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  return null;
+}
+
 interface TerminalJob {
   id: string;
   command: string;
@@ -44,9 +71,18 @@ export class DirectToolService {
     }
   }
 
-  read(path: string, workspace: string, mode: LunaSandbox, maxChars = 200_000): { path: string; text: string; truncated: boolean } {
+  read(path: string, workspace: string, mode: LunaSandbox, maxChars = 200_000, maxImageBytes = 10_000_000): DirectTextFileRead | DirectImageFileRead {
     const target = resolveScopedPath(path, workspace, mode);
-    const text = readFileSync(target, "utf8");
+    const bytes = readFileSync(target);
+    const mimeType = imageMimeType(bytes);
+    if (mimeType) {
+      const limit = Math.min(Math.max(1, maxImageBytes), MAX_DIRECT_IMAGE_BYTES);
+      if (bytes.length > limit) {
+        throw new Error(`Image exceeds the ${limit}-byte MCP transfer limit: ${target}`);
+      }
+      return { path: target, mimeType, data: bytes.toString("base64"), bytes: bytes.length };
+    }
+    const text = bytes.toString("utf8");
     return { path: target, text: text.slice(0, maxChars), truncated: text.length > maxChars };
   }
 

@@ -24,7 +24,7 @@ normal ChatGPT conversation
 OpenAI Tunnel → standalone local MCP runtime
         │
         ├─ codexluna_start/status/cancel/session
-        ├─ file_read/list/search/write
+        ├─ file_read (text + native MCP images) / list / search / write
         └─ terminal_start/status/cancel
                  │
                  ▼
