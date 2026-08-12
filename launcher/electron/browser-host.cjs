@@ -14,6 +14,7 @@ const {
   LUNA_TOOL_BINDING_ACK,
   NORMAL_CHAT_URL,
   SESSION_MEMORY_BOUNDARY_ACK,
+  isTemporaryChatUrl,
   memoryBoundaryPrompt,
   toolBindingPrompt,
   webSessionIdFromUrl,
@@ -588,6 +589,13 @@ class BrowserHost {
           void contents.executeJavaScript(
             `localStorage.setItem("webgpt.last_conversation_url", ${JSON.stringify(url)})`, true,
           ).catch(() => {});
+          if (!this.activeTraceId && !this.manualOperation && !this.restoringSession) {
+            void this.probeAuthentication().catch((error) => {
+              this.logger.error("browser.standard_chat_bootstrap_failed", {
+                message: error instanceof Error ? error.message : String(error),
+              });
+            });
+          }
         }
       }
     });
@@ -1400,6 +1408,7 @@ class BrowserHost {
     if (this.sessionBootstrapOperation) return await this.sessionBootstrapOperation;
     this.sessionBootstrapOperation = (async () => {
       const contents = this.view.webContents;
+      if (isTemporaryChatUrl(contents.getURL())) await contents.loadURL(NORMAL_CHAT_URL);
       let webSessionId = webSessionIdFromUrl(contents.getURL());
       if (webSessionId) {
         const alreadyBound = await contents.executeJavaScript(
@@ -1418,6 +1427,9 @@ class BrowserHost {
       if (!webSessionId) throw new Error("ChatGPT did not assign a stable /c/<conversation-id> URL");
       await this.submitVisibleHomePrompt(toolBindingPrompt(webSessionId));
       await this.waitForVisibleAcknowledgement(LUNA_TOOL_BINDING_ACK);
+      if (webSessionIdFromUrl(contents.getURL()) !== webSessionId) {
+        throw new Error("ChatGPT conversation changed before its Luna binding was acknowledged");
+      }
       await contents.executeJavaScript(
         `localStorage.setItem(${JSON.stringify(`webgpt.boundary.${webSessionId}`)}, "1")`, true,
       );

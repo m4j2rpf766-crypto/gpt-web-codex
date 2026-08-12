@@ -19,6 +19,12 @@ function webSessionIdFromUrl(value) {
   return conversationId ? `chatgpt:${conversationId}` : null;
 }
 
+function isTemporaryChatUrl(value) {
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  return url.origin === CHATGPT_ORIGIN && url.searchParams.get("temporary-chat") === "true";
+}
+
 function memoryBoundaryPrompt() {
   return [
     "【WebGPT Luna 会话边界声明｜由本地应用自动发送，用户可见】",
@@ -34,6 +40,7 @@ function toolBindingPrompt(webSessionId) {
   return [
     "【WebGPT Luna 本地工具绑定｜由本地应用自动发送，用户可见】",
     `本对话的稳定 web_session_id 是：${webSessionId}`,
+    "本对话只能使用名为 WebGPT Luna Standalone 的连接器；不要调用旧 WebGPT Luna 或 Codex Native 连接器。",
     "调用 codexluna_* 工具时必须原样填写该值。codexluna 用于让网页 GPT 规划、由 Luna 执行并验证；file_* 与 terminal_* 是可并列直接使用的本地工具。",
     "第一次涉及本地操作前，先向用户明确显示将使用的 workspace_path 与 permission_mode。路径可由用户或你填写，不是固定路径。",
     "默认采用 workspace-write；只有用户明确选择时才使用 read-only 或 danger-full-access。长任务使用异步 start/status，不要因网页回答停止而取消 Luna。",
@@ -47,6 +54,7 @@ module.exports = {
   NORMAL_CHAT_URL,
   SESSION_MEMORY_BOUNDARY_ACK,
   conversationIdFromUrl,
+  isTemporaryChatUrl,
   memoryBoundaryPrompt,
   toolBindingPrompt,
   webSessionIdFromUrl,

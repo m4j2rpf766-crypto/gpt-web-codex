@@ -135,7 +135,7 @@ test("session inspection delegates navigation and capability detection to the sh
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     helper: { executable: "/runtime/electron", script: "/runtime/browser-helper.cjs" },
     descriptorPath: "/runtime/launcher-browser.json",
-    getConnectorName: () => "WebGPT Luna",
+    getConnectorName: () => "WebGPT Luna Standalone",
     logger: { info() {} },
     view: { webContents: { getURL: () => "https://chatgpt.com/" } },
     refreshChatGptHomeDocument: async () => calls.push({ operation: "refresh" }),
@@ -166,7 +166,7 @@ test("session inspection delegates navigation and capability detection to the sh
   assert.equal(calls.length, 2);
   assert.equal(calls[0].operation, "refresh");
   assert.equal(calls[1].operation, "inspect");
-  assert.equal(calls[1].appName, "WebGPT Luna");
+  assert.equal(calls[1].appName, "WebGPT Luna Standalone");
   assert.deepEqual(calls[1].payload, { detectCapabilities: true });
 });
 
@@ -698,7 +698,7 @@ test("launcher delegates model turns while owning visible normal-chat bootstrap"
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     helper: { executable: "/runtime/electron", script: "/runtime/browser-helper.cjs" },
     descriptorPath: "/runtime/launcher-browser.json",
-    getConnectorName: () => "WebGPT Luna",
+    getConnectorName: () => "WebGPT Luna Standalone",
     logger: { info: (...args) => calls.push(["log", ...args]) },
     show: () => calls.push(["show"]),
     waitForSurfaceReady: async () => calls.push(["ready"]),
@@ -716,7 +716,7 @@ test("launcher delegates model turns while owning visible normal-chat bootstrap"
   });
   const helperCall = calls.find(call => call[0] === "helper")[1];
   assert.equal(helperCall.operation, "smoke");
-  assert.equal(helperCall.appName, "WebGPT Luna");
+  assert.equal(helperCall.appName, "WebGPT Luna Standalone");
 });
 
 test("launcher restores only a valid persisted normal conversation URL", async () => {
@@ -788,6 +788,41 @@ test("existing conversation bootstrap is idempotent and a new chat receives its 
   assert.equal(fresh.sessionBootstrapOperation, null);
 });
 
+test("temporary chat is replaced with normal chat before any visible session declaration", async () => {
+  let currentUrl = "https://chatgpt.com/?temporary-chat=true";
+  const loads = [];
+  const prompts = [];
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    sessionBootstrapOperation: null,
+    view: {
+      webContents: {
+        getURL: () => currentUrl,
+        loadURL: async url => { loads.push(url); currentUrl = url; },
+        executeJavaScript: async () => null,
+      },
+    },
+    logger: { info() {} },
+    setState() {},
+    submitVisibleHomePrompt: async prompt => {
+      prompts.push(prompt);
+      if (prompts.length === 1) currentUrl = "https://chatgpt.com/c/019ff1b5-0747-7bc0-8871-977533a91227";
+    },
+    waitForVisibleAcknowledgement: async () => {},
+  });
+  await BrowserHost.prototype.ensureSessionBootstrap.call(fixture);
+  assert.deepEqual(loads, ["https://chatgpt.com/"]);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /chatgpt:019ff1b5-0747-7bc0-8871-977533a91227/);
+});
+
+test("normal conversation navigation schedules authentication and session bootstrap", () => {
+  const source = fs.readFileSync(require.resolve("../electron/browser-host.cjs"), "utf8");
+  assert.match(
+    source,
+    /did-navigate-in-page[\s\S]*?webSessionIdFromUrl\(url\)[\s\S]*?this\.probeAuthentication\(\)/,
+  );
+});
+
 test("browser helper operations fail closed when the configured connector name is invalid", async () => {
   let helperCalls = 0;
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -820,9 +855,9 @@ test("connector verification is effort-independent and works while the browser s
     },
   };
 
-  const result = await BrowserHost.prototype.runConnectorVerification.call(fixture, "WebGPT Luna");
+  const result = await BrowserHost.prototype.runConnectorVerification.call(fixture, "WebGPT Luna Standalone");
 
-  assert.deepEqual(result, { ok: true, appName: "WebGPT Luna" });
+  assert.deepEqual(result, { ok: true, appName: "WebGPT Luna Standalone" });
   assert.equal(calls.some(([type]) => type === "show"), false);
   assert.deepEqual(
     calls.filter(([type]) => ["refresh", "helper"].includes(type)),
@@ -831,7 +866,7 @@ test("connector verification is effort-independent and works while the browser s
       ["helper", {
         helper: fixture.helper,
         descriptorPath: fixture.descriptorPath,
-        appName: "WebGPT Luna",
+        appName: "WebGPT Luna Standalone",
         logger: fixture.logger,
       }],
     ],
@@ -1021,7 +1056,7 @@ test("connector verification hard-refreshes an already hydrated Temporary Chat p
     },
   };
 
-  await BrowserHost.prototype.runConnectorVerification.call(fixture, "WebGPT Luna");
+  await BrowserHost.prototype.runConnectorVerification.call(fixture, "WebGPT Luna Standalone");
 
   assert.equal(loaded, false);
   assert.equal(refreshed, true);

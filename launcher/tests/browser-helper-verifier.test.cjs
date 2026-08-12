@@ -17,7 +17,7 @@ test("launcher verification delegates exact connector selection to the browser h
       const message = JSON.parse(line);
       if (message.type === "shutdown") process.exit(0);
       if (message.type !== "verify") return;
-      if (message.config.appName !== "WebGPT Luna") process.exit(2);
+      if (message.config.appName !== "WebGPT Luna Standalone") process.exit(2);
       if (message.config.browserHostDescriptorPath !== "/runtime/launcher-browser.json") process.exit(3);
       send({ type: "result", id: message.id, text: message.config.appName });
     });
@@ -26,11 +26,11 @@ test("launcher verification delegates exact connector selection to the browser h
   const result = await verifyConnectorWithBrowserHelper({
     helper: { executable: process.execPath, script },
     descriptorPath: "/runtime/launcher-browser.json",
-    appName: "WebGPT Luna",
+    appName: "WebGPT Luna Standalone",
     logger: { info() {} },
   });
 
-  assert.deepEqual(result, { ok: true, appName: "WebGPT Luna" });
+  assert.deepEqual(result, { ok: true, appName: "WebGPT Luna Standalone" });
 });
 
 test("launcher verification consumes a helper input EOF after the result", async (context) => {
@@ -53,9 +53,9 @@ test("launcher verification consumes a helper input EOF after the result", async
   const result = await verifyConnectorWithBrowserHelper({
     helper: { executable: process.execPath, script },
     descriptorPath: "/runtime/launcher-browser.json",
-    appName: "WebGPT Luna",
+    appName: "WebGPT Luna Standalone",
     logger: { info() {} },
   });
 
-  assert.deepEqual(result, { ok: true, appName: "WebGPT Luna" });
+  assert.deepEqual(result, { ok: true, appName: "WebGPT Luna Standalone" });
 });

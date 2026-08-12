@@ -57,7 +57,7 @@ function hostFor(existingConfig) {
 }
 
 test("core setup preserves an existing full-harness installation", async () => {
-  const fixture = hostFor({ mode: "full", appName: "WebGPT Luna" });
+  const fixture = hostFor({ mode: "full", appName: "WebGPT Luna Standalone" });
   const result = await fixture.host.setupCore();
   assert.equal(result.mode, "full");
   assert.deepEqual(fixture.invocation().args, [
@@ -69,14 +69,14 @@ test("core setup preserves an existing full-harness installation", async () => {
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
-    "WebGPT Luna",
+    "WebGPT Luna Standalone",
   ]);
 });
 
 test("core setup replaces the known legacy connector identity with the direct-turn identity", async () => {
   const fixture = hostFor({ mode: "full", appName: "Codex Native" });
   await fixture.host.setupCore();
-  assert.deepEqual(fixture.invocation().args.slice(-2), ["--app-name", "WebGPT Luna"]);
+  assert.deepEqual(fixture.invocation().args.slice(-2), ["--app-name", "WebGPT Luna Standalone"]);
 });
 
 test("core setup starts in browser-only mode when no installation exists", async () => {
@@ -180,7 +180,7 @@ test("launcher update transaction upgrades its owned full runtime with saved con
   const fixture = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "WebGPT Luna",
+    appName: "WebGPT Luna Standalone",
     releaseVersion: "1.1.1",
   });
   fixture.host.bridgeStatus = async () => ({ installed: true, active: true, errors: [] });
@@ -195,7 +195,7 @@ test("launcher update transaction upgrades its owned full runtime with saved con
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
-    "WebGPT Luna",
+    "WebGPT Luna Standalone",
   ]);
   assert.deepEqual(result, {
     updated: true,
@@ -208,11 +208,11 @@ test("launcher update transaction upgrades its owned full runtime with saved con
   });
 });
 
-test("launcher migrates the legacy connector identity even when the release version is unchanged", async () => {
+test("launcher migrates the cached WebGPT Luna identity even when the release version is unchanged", async () => {
   const fixture = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native",
+    appName: "WebGPT Luna",
     releaseVersion: "1.1.3",
   });
   fixture.host.bridgeStatus = async () => ({ installed: true, active: true, errors: [] });
@@ -227,7 +227,7 @@ test("launcher migrates the legacy connector identity even when the release vers
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
-    "WebGPT Luna",
+    "WebGPT Luna Standalone",
   ]);
   assert.equal(result.updated, true);
   assert.equal(result.connectorMigrated, true);
@@ -258,7 +258,7 @@ test("launcher update transaction leaves current and externally owned runtimes u
   const currentFull = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "WebGPT Luna",
+    appName: "WebGPT Luna Standalone",
     releaseVersion: "1.1.3",
   });
   const external = hostFor({ mode: "browser-only", browserHost: "managed-chrome", releaseVersion: "1.1.1" });
@@ -277,7 +277,7 @@ test("MCP setup reuses valid private credentials without exposing or rewriting t
   fs.writeFileSync(keyPath, "saved-private-runtime-key\n", { mode: 0o600 });
   const fixture = hostFor({
     mode: "full",
-    appName: "WebGPT Luna",
+    appName: "WebGPT Luna Standalone",
     tunnel: {
       tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
       runtimeKeyFile: keyPath,
@@ -292,7 +292,7 @@ test("MCP setup reuses valid private credentials without exposing or rewriting t
       "--browser-host-descriptor",
       "/runtime/launcher-browser.json",
       "--app-name",
-      "WebGPT Luna",
+      "WebGPT Luna Standalone",
       "--acknowledge-unofficial",
       "--restart-service",
     ]);
@@ -317,7 +317,7 @@ test("new MCP setup uses the explicit default connector name", async () => {
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
     "--app-name",
-    "WebGPT Luna",
+    "WebGPT Luna Standalone",
   ]);
 });
 
@@ -463,13 +463,13 @@ test.skip("retired runtime cleanup restores the previous Codex route", async () 
 });
 
 test("connector verification uses the current identity and rejects a legacy local runtime", () => {
-  const full = hostFor({ mode: "full", appName: "WebGPT Luna" });
-  assert.equal(full.host.mcpConnectorName(), "WebGPT Luna");
-  assert.equal(full.host.browserConnectorName(), "WebGPT Luna");
+  const full = hostFor({ mode: "full", appName: "WebGPT Luna Standalone" });
+  assert.equal(full.host.mcpConnectorName(), "WebGPT Luna Standalone");
+  assert.equal(full.host.browserConnectorName(), "WebGPT Luna Standalone");
   const defaultName = hostFor(null);
   assert.equal(defaultName.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   const legacyFull = hostFor({ mode: "full", appName: "Codex Native" });
-  assert.equal(legacyFull.host.browserConnectorName(), "WebGPT Luna");
+  assert.equal(legacyFull.host.browserConnectorName(), "WebGPT Luna Standalone");
   assert.throws(
     () => legacyFull.host.mcpConnectorName(),
     /still targets legacy ChatGPT connector.*create that connector as a new ChatGPT plugin/,
@@ -478,7 +478,7 @@ test("connector verification uses the current identity and rejects a legacy loca
   assert.throws(() => invalidFull.host.mcpConnectorName(), /Connector name is invalid/);
   assert.throws(() => invalidFull.host.browserConnectorName(), /Connector name is invalid/);
   const browserOnly = hostFor({ mode: "browser-only", appName: "Codex Native" });
-  assert.equal(browserOnly.host.browserConnectorName(), "WebGPT Luna");
+  assert.equal(browserOnly.host.browserConnectorName(), "WebGPT Luna Standalone");
   assert.throws(() => browserOnly.host.mcpConnectorName(), /MCP runtime is not configured/);
 });
 

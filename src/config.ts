@@ -10,11 +10,11 @@ export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
 
 /**
- * ChatGPT caches a connector's public MCP contract by connector identity. The direct turn-token
- * contract therefore has a new identity instead of mutating the retired connector in place.
+ * ChatGPT caches a connector's public MCP contract by connector identity. The standalone Luna
+ * contract therefore has a new identity instead of mutating a retired connector in place.
  */
-export const CHATGPT_CONNECTOR_NAME = "WebGPT Luna";
-export const LEGACY_CHATGPT_CONNECTOR_NAMES = ["Codex Native", "Codex Native2"] as const;
+export const CHATGPT_CONNECTOR_NAME = "WebGPT Luna Standalone";
+export const LEGACY_CHATGPT_CONNECTOR_NAMES = ["Codex Native", "Codex Native2", "WebGPT Luna"] as const;
 
 export function isLegacyChatGptConnectorName(value: string): boolean {
   return (LEGACY_CHATGPT_CONNECTOR_NAMES as readonly string[]).includes(value);

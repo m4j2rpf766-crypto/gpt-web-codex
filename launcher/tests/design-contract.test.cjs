@@ -166,8 +166,8 @@ test("MCP copy includes every required account, key, and connector instruction",
   assert.match(appSource, /\|\| !snapshot\.state\.coreSetupComplete/);
   assert.match(i18nSource, /enable Developer Mode[\s\S]*?choose Tunnel[\s\S]*?set Authentication to None/);
   assert.match(i18nSource, /create a new connector[\s\S]*?exact connector name shown below/);
-  assert.match(i18nSource, /Leave it untouched and create WebGPT Luna as a new connector/);
-  assert.match(i18nSource, /Do not rename or refresh the old connector/);
+  assert.match(i18nSource, /Create WebGPT Luna Standalone as a new connector/);
+  assert.match(i18nSource, /do not rename or refresh an old connector/);
   assert.match(i18nSource, /choose Allow all actions[\s\S]*?permission_mode still controls each execution/);
   assert.match(appSource, /<NoticeRow icon="alert" tone="warning">/);
   assert.doesNotMatch(appSource, /icon="spark"/);
@@ -213,13 +213,13 @@ test("launcher migrates and verifies the explicit direct-turn connector identity
   assert.match(electronMain, /connectorName:\s*runtimeHost\.browserConnectorName\(\)/);
   assert.match(electronMain, /getConnectorName:\s*\(\) => runtimeHost\.browserConnectorName\(\)/);
   assert.match(appSource, /<code>\{snapshot\.connectorName\}<\/code>/);
-  assert.match(connectorIdentitySource, /CURRENT_CONNECTOR_NAME = "WebGPT Luna"/);
-  assert.match(connectorIdentitySource, /LEGACY_CONNECTOR_NAMES = Object\.freeze\(\["Codex Native", "Codex Native2"\]\)/);
-  assert.match(runtimeConfigSource, /CHATGPT_CONNECTOR_NAME = "WebGPT Luna"/);
-  assert.match(runtimeConfigSource, /LEGACY_CHATGPT_CONNECTOR_NAMES = \["Codex Native", "Codex Native2"\]/);
+  assert.match(connectorIdentitySource, /CURRENT_CONNECTOR_NAME = "WebGPT Luna Standalone"/);
+  assert.match(connectorIdentitySource, /LEGACY_CONNECTOR_NAMES = Object\.freeze\(\["Codex Native", "Codex Native2", "WebGPT Luna"\]\)/);
+  assert.match(runtimeConfigSource, /CHATGPT_CONNECTOR_NAME = "WebGPT Luna Standalone"/);
+  assert.match(runtimeConfigSource, /LEGACY_CHATGPT_CONNECTOR_NAMES = \["Codex Native", "Codex Native2", "WebGPT Luna"\]/);
   assert.match(runtimeSource, /connectorMigrationRequired[\s\S]*?isLegacyConnectorName/);
   assert.match(runtimeSource, /requireCurrentRuntimeConnectorName/);
-  assert.match(i18nSource, /Do not rename or refresh the old connector/);
+  assert.match(i18nSource, /do not rename or refresh an old connector/);
   assert.match(appSource, /copy\.connectorMigrationNotice/);
   for (const source of [electronMain, browserHostSource, appSource]) {
     assert.doesNotMatch(source, /CURRENT_CONNECTOR_NAME = "Codex Native2"/);

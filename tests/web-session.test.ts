@@ -4,6 +4,7 @@ import {
   NORMAL_CHAT_URL,
   SESSION_MEMORY_BOUNDARY_ACK,
   conversationIdFromUrl,
+  isTemporaryChatUrl,
   memoryBoundaryPrompt,
   toolBindingPrompt,
   webSessionIdFromUrl,
@@ -18,6 +19,8 @@ test("normal ChatGPT conversation URL deterministically identifies a web session
   expect(webSessionIdFromUrl("https://chatgpt.com/g/g-project/c/019ff1b5-0747-7bc0-8871-977533a91227?model=gpt-5#latest"))
     .toBe("chatgpt:019ff1b5-0747-7bc0-8871-977533a91227");
   expect(webSessionIdFromUrl("https://chatgpt.com/?temporary-chat=true")).toBeNull();
+  expect(isTemporaryChatUrl("https://chatgpt.com/?temporary-chat=true")).toBe(true);
+  expect(isTemporaryChatUrl("https://chatgpt.com/c/019ff1b5-0747-7bc0-8871-977533a91227")).toBe(false);
   expect(webSessionIdFromUrl("https://chatgpt.com/c/019ff1b5-0747-7bc0-8871-977533a91227/extra")).toBeNull();
   expect(webSessionIdFromUrl("https://chatgpt.com/share/019ff1b5-0747-7bc0-8871-977533a91227")).toBeNull();
   expect(webSessionIdFromUrl("https://example.com/c/019ff1b5-0747-7bc0-8871-977533a91227")).toBeNull();
