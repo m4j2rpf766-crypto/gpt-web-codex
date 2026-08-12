@@ -132,6 +132,33 @@ test("same web session serializes jobs and resumes the durable Luna session", as
   }
 });
 
+test("image-preview Luna tasks persist verified local image artifacts without claiming UI rendering", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-luna-image-artifact-"));
+  const imagePath = join(root, "preview image.png");
+  writeFileSync(imagePath, Buffer.from("image"));
+  try {
+    const manager = new LunaJobManager(new LunaStateStore(join(root, "state.json")), (_command, _args, cwd) => {
+      const events = [
+        { type: "thread.started", thread_id: "luna-image-thread" },
+        { type: "item.completed", item: { type: "command_execution", aggregated_output: `FullName : ${imagePath}` } },
+        { type: "item.completed", item: { type: "agent_message", text: `Found ${imagePath}` } },
+        { type: "turn.completed" },
+      ];
+      const script = `process.stdin.resume();${events.map(event => `console.log(${JSON.stringify(JSON.stringify(event))});`).join("")}process.exitCode=0;`;
+      return spawn(process.execPath, ["-e", script], { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    }, join(root, "logs"));
+    const job = manager.start({ webSessionId: "image-session-123", prompt: "显示最新的图片", cwd: root });
+    await eventually(() => manager.get(job.id).status === "completed");
+    expect(manager.get(job.id).wantsImagePreview).toBe(true);
+    expect(manager.get(job.id).imageArtifacts).toEqual([imagePath]);
+    expect(manager.get(job.id).finalMessage).toContain(imagePath);
+    expect(manager.get(job.id).finalMessage).not.toContain("显示在上方");
+    manager.shutdown();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("recreated Luna manager resumes one web session while isolating another", async () => {
   const root = mkdtempSync(join(tmpdir(), "webgpt-restart-binding-"));
   const statePath = join(root, "state.json");
@@ -279,6 +306,7 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
     expect(client.getInstructions()).toContain("Use codexluna_init before the first codexluna_start");
     expect(client.getInstructions()).toContain("不得主动把本对话中的内容");
     expect(client.getInstructions()).toContain("无需要求用户回复确认口令");
+    expect(client.getInstructions()).toContain("Never claim that an image is displayed");
     const names = (await client.listTools()).tools.map(tool => tool.name).sort();
     expect(names).toEqual([
       "codexluna_cancel", "codexluna_init", "codexluna_session", "codexluna_start", "codexluna_status",
@@ -320,7 +348,59 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
       arguments: { web_session_id: "conversation-standalone-123" },
     });
     expect(binding.isError).not.toBe(true);
-    expect(JSON.stringify(binding.structuredContent)).toContain("conversation-standalone-123");
+    expect(binding.structuredContent).toMatchObject({ binding: null });
+    const uninitializedStart = await client.callTool({
+      name: "codexluna_start",
+      arguments: {
+        web_session_id: "uninitialized-conversation-123",
+        prompt: "inspect only",
+        workspace_path: root,
+      },
+    });
+    expect(uninitializedStart.isError).toBe(true);
+    expect(JSON.stringify(uninitializedStart.content)).toContain("codexluna_init must initialize");
+  } finally {
+    await client.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("completed Luna image status returns native image content and inline preview metadata", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-mcp-luna-image-status-"));
+  const statePath = join(root, "state.json");
+  const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  const imagePath = join(root, "luna-preview.png");
+  writeFileSync(imagePath, image);
+  const storedJob = { ...sampleJob(root), id: "44444444-4444-4444-8444-444444444444", status: "completed" as const,
+    wantsImagePreview: true, imageArtifacts: [imagePath], finalMessage: `Found ${imagePath}`, terminalEvent: "turn.completed" };
+  const store = new LunaStateStore(statePath);
+  store.initializeBinding(storedJob.webSessionId, {
+    workspacePath: root, permissionMode: "read-only", model: "gpt-5.6-luna", reasoning: "high",
+    fast: true, timeoutMs: 900_000, sessionPolicyVersion: 1,
+  });
+  store.putJob(storedJob);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["src/cli.ts", "mcp", "--state-path", statePath],
+    cwd: process.cwd(),
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "webgpt-luna-image-status-test", version: "1.0.0" });
+  try {
+    await client.connect(transport);
+    const tools = await client.listTools();
+    expect(tools.tools.find(tool => tool.name === "codexluna_status")?._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
+    const output = await client.callTool({ name: "codexluna_status", arguments: { job_id: storedJob.id } });
+    expect(output.isError).not.toBe(true);
+    expect(output.structuredContent).toMatchObject({
+      status: "completed", image_artifacts: [imagePath], image_preview_rendered: true, image_preview_error: null,
+    });
+    const content = output.content as Array<{ type: string; data?: string }>;
+    expect(content.some(item => item.type === "image" && item.data === image.toString("base64"))).toBe(true);
+    expect(output._meta?.webgpt_image_preview).toEqual({
+      name: "luna-preview.png", mime_type: "image/png", bytes: image.length,
+      data_url: `data:image/png;base64,${image.toString("base64")}`,
+    });
   } finally {
     await client.close();
     rmSync(root, { recursive: true, force: true });

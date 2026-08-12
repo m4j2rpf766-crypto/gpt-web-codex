@@ -29,6 +29,12 @@ Expose both tool families by default:
 ChatGPT may use direct tools for narrow operations and Luna for agentic execution. Work in one Luna
 session is serialized. Separate Web conversations may run independently.
 
+When a user asks to see a local image, a Luna message or filesystem path is not proof that the image
+was rendered. The Luna job records verified absolute image artifacts, and `codexluna_status` returns
+the first eligible artifact as native MCP image content plus inline preview metadata. ChatGPT may say
+the image is displayed only when `image_preview_rendered` is true. Direct `file_image_preview` remains
+available when ChatGPT already knows the path.
+
 ## Conversation and Luna session identity
 
 - Do not require a browser extension or address-bar access to derive identity.

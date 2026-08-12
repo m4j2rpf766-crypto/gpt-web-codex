@@ -1,4 +1,4 @@
-export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview-v6.html";
+export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview-v7.html";
 export const IMAGE_PREVIEW_MIME_TYPE = "text/html;profile=mcp-app";
 
 export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
@@ -57,13 +57,35 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
           else queue.push(...Object.values(item));
         }
       };
+      const findJobStatus = (value) => {
+        const seen = new Set();
+        const queue = [value];
+        for (let visited = 0; queue.length && visited < 200; visited += 1) {
+          let item = queue.shift();
+          if (typeof item === "string" && item.trim().startsWith("{")) {
+            try { item = JSON.parse(item); } catch {}
+          }
+          if (!item || typeof item !== "object" || seen.has(item)) continue;
+          seen.add(item);
+          if (typeof item.status === "string" && typeof item.job_id === "string") return item;
+          if (Array.isArray(item)) queue.push(...item);
+          else queue.push(...Object.values(item));
+        }
+      };
       const render = (globals) => {
         const api = window.openai || {};
-        const image = findImage(globals) || findImage({
+        const sources = {
+          globals,
           toolResponseMetadata: api.toolResponseMetadata,
           toolOutput: api.toolOutput,
-        });
-        if (!image?.data_url) return false;
+        };
+        const image = findImage(sources);
+        if (!image?.data_url) {
+          const job = findJobStatus(sources);
+          if (job?.status === "completed") status.textContent = "任务已完成，但没有返回可显示的图片。";
+          else if (job?.status) status.textContent = "Luna 任务状态：" + job.status + "，正在等待图片产物…";
+          return false;
+        }
         preview.src = image.data_url;
         preview.alt = "Local image preview: " + (image.name || "image");
         name.textContent = image.name || "image";

@@ -36,6 +36,37 @@ function eventMutates(event: Record<string, unknown>): boolean {
   return type === "file_change" || type === "command_execution";
 }
 
+const IMAGE_EXTENSION = /\.(?:png|jpe?g|gif|webp)$/i;
+const IMAGE_REQUEST = /(?:图片|图像|照片|截图|预览|显示.{0,16}(?:png|jpe?g|gif|webp)|\b(?:image|photo|picture|screenshot|preview)\b)/i;
+
+function requestedImagePreview(prompt: string): boolean {
+  return IMAGE_REQUEST.test(prompt);
+}
+
+function imagePaths(value: string): string[] {
+  const matches = value.match(/[A-Za-z]:\\[^\r\n"'<>|?*`]+?\.(?:png|jpe?g|gif|webp)|\/(?:[^\r\n"'<>`]| (?![-*]))+?\.(?:png|jpe?g|gif|webp)/gi) ?? [];
+  return matches.map(path => path.trim()).filter(path => IMAGE_EXTENSION.test(path));
+}
+
+function eventImagePaths(event: Record<string, unknown>): string[] {
+  if (!event.item || typeof event.item !== "object") return [];
+  const item = event.item as Record<string, unknown>;
+  const values = [item.text, item.aggregated_output].filter((value): value is string => typeof value === "string");
+  return values.flatMap(imagePaths);
+}
+
+function imagePreviewInstruction(prompt: string): string {
+  if (!requestedImagePreview(prompt)) return prompt;
+  return [
+    prompt,
+    "",
+    "GPT Web Codex image handoff requirement:",
+    "- Locate and verify the requested image, but do not claim that it is displayed or previewed in ChatGPT.",
+    "- In the final answer, include the exact absolute path of every image the user should see.",
+    "- The parent MCP runtime, not this Luna process, is responsible for rendering the image in ChatGPT.",
+  ].join("\n");
+}
+
 export class LunaJobManager {
   private readonly tails = new Map<string, Promise<void>>();
   private readonly active = new Map<string, ChildProcessWithoutNullStreams>();
@@ -79,6 +110,8 @@ export class LunaJobManager {
       id,
       webSessionId,
       promptChars: prompt.length,
+      wantsImagePreview: requestedImagePreview(prompt),
+      imageArtifacts: [],
       cwd,
       model: input.model?.trim() || "gpt-5.6-luna",
       reasoning: input.reasoning ?? "high",
@@ -93,7 +126,7 @@ export class LunaJobManager {
       logPath: join(this.logDir, `${id}.jsonl`),
     };
     if (job.timeoutMs < 1_000 || job.timeoutMs > 24 * 60 * 60_000) throw new Error("timeout_ms must be between 1000 and 86400000");
-    this.prompts.set(id, prompt);
+    this.prompts.set(id, imagePreviewInstruction(prompt));
     this.store.putJob(job);
     const previous = this.tails.get(webSessionId) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(() => this.run(id));
@@ -162,6 +195,7 @@ export class LunaJobManager {
     let lunaSessionId = binding.lunaSessionId;
     let mutationSeen = false;
     let eventCount = 0;
+    const imageArtifacts = new Set<string>(queued.imageArtifacts ?? []);
     let stderr = "";
     let timedOut = false;
 
@@ -188,6 +222,9 @@ export class LunaJobManager {
         if (["turn.completed", "turn.failed", "error"].includes(String(event.type))) terminalEvent = String(event.type);
         finalMessage = eventText(event) ?? finalMessage;
         mutationSeen ||= eventMutates(event);
+        for (const path of eventImagePaths(event)) {
+          if (existsSync(path) && statSync(path).isFile()) imageArtifacts.add(path);
+        }
       } catch {
         // Preserve malformed output in the JSONL log; the terminal process result remains authoritative.
       }
@@ -212,6 +249,7 @@ export class LunaJobManager {
       exitCode: outcome.code,
       terminalEvent: timedOut ? "timeout" : terminalEvent,
       finalMessage,
+      imageArtifacts: [...imageArtifacts],
       lunaSessionId,
       mutationSeen,
       eventCount,

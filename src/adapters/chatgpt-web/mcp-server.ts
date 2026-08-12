@@ -32,6 +32,29 @@ function lunaResult(value: Record<string, unknown>, isError = false) {
   return result({ ...value, session_policy: COMPACT_SESSION_POLICY }, isError);
 }
 
+function lunaStatusResult(
+  value: Record<string, unknown>,
+  preview: ReturnType<DirectToolService["read"]> | undefined,
+) {
+  const structured = { ...value, session_policy: COMPACT_SESSION_POLICY };
+  if (!preview || !("data" in preview)) return result(structured);
+  const name = preview.path.replaceAll("\\", "/").split("/").at(-1) || "image";
+  const metadata = {
+    name,
+    mime_type: preview.mimeType,
+    bytes: preview.bytes,
+    data_url: `data:${preview.mimeType};base64,${preview.data}`,
+  };
+  return {
+    content: [
+      { type: "text" as const, text: JSON.stringify(structured) },
+      { type: "image" as const, data: preview.data, mimeType: preview.mimeType },
+    ],
+    structuredContent: structured,
+    _meta: { webgpt_image_preview: metadata },
+  };
+}
+
 function fileReadResult(value: ReturnType<DirectToolService["read"]>) {
   if (!("data" in value)) return result({ ...value });
   const metadata = { path: value.path, mime_type: value.mimeType, bytes: value.bytes };
@@ -75,7 +98,7 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
   const jobs = new LunaJobManager(new LunaStateStore(options.statePath));
   const direct = new DirectToolService();
   const server = new McpServer(
-    { name: "webgpt-luna", version: "0.3.0" },
+    { name: "webgpt-luna", version: "0.3.1" },
     { instructions: MCP_SERVER_INSTRUCTIONS },
   );
   const shutdown = () => {
@@ -169,6 +192,9 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, async input => {
     const binding = jobs.store.binding(input.web_session_id);
+    if (binding?.sessionPolicyVersion !== SESSION_POLICY_VERSION) {
+      throw new Error("codexluna_init must initialize this ChatGPT conversation before codexluna_start");
+    }
     const workspacePath = input.workspace_path ?? binding?.workspacePath;
     if (!workspacePath) throw new Error("codexluna_init must be called before codexluna_start, or workspace_path must be provided");
     const job = jobs.start({
@@ -186,17 +212,37 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
 
   server.registerTool("codexluna_status", {
     title: "Get Luna execution status",
-    description: "Poll an asynchronous Luna task. Completed results are compact; full JSONL remains in the local log.",
+    description: "Poll an asynchronous Luna task. Completed results are compact; full JSONL remains in the local log. For an image-preview task, this tool automatically returns the first verified local image artifact as native image content and an inline preview. Do not claim an image is displayed unless image_preview_rendered is true.",
     inputSchema: { job_id: z.string().uuid() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: {
+      ui: { resourceUri: IMAGE_PREVIEW_RESOURCE_URI, visibility: ["model", "app"] },
+      "ui/resourceUri": IMAGE_PREVIEW_RESOURCE_URI,
+      "openai/outputTemplate": IMAGE_PREVIEW_RESOURCE_URI,
+      "openai/toolInvocation/invoking": "正在检查 Luna 任务",
+      "openai/toolInvocation/invoked": "Luna 任务状态已更新",
+    },
   }, async ({ job_id }) => {
     const job = jobs.get(job_id);
-    return lunaResult({
+    let preview: ReturnType<DirectToolService["read"]> | undefined;
+    let previewError: string | null = null;
+    const previewPath = job.status === "completed" && job.wantsImagePreview ? job.imageArtifacts?.[0] : undefined;
+    if (previewPath) {
+      try {
+        preview = direct.read(previewPath, job.cwd, job.sandbox, 1, 10_000_000);
+      } catch (error) {
+        previewError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    const imagePreviewRendered = Boolean(preview && "data" in preview);
+    return lunaStatusResult({
       web_session_id: job.webSessionId,
       job_id: job.id, status: job.status, luna_session_id: job.lunaSessionId ?? null,
       workspace_path: job.cwd, terminal_event: job.terminalEvent ?? null, final_message: job.finalMessage ?? null,
       error: job.error ?? null, mutation_seen: job.mutationSeen, event_count: job.eventCount,
-    });
+      image_artifacts: job.imageArtifacts ?? [], image_preview_rendered: imagePreviewRendered,
+      image_preview_error: previewError,
+    }, preview);
   });
 
   server.registerTool("codexluna_cancel", {
@@ -211,10 +257,10 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
 
   server.registerTool("codexluna_session", {
     title: "Inspect Luna session binding",
-    description: "Inspect the durable Luna session bound to a ChatGPT web conversation.",
+    description: "Inspect an existing durable Luna session binding. This does not initialize a new ChatGPT conversation; use codexluna_init first.",
     inputSchema: { web_session_id: sessionId },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async ({ web_session_id }) => lunaResult({ binding: jobs.store.ensureBinding(web_session_id) }));
+  }, async ({ web_session_id }) => lunaResult({ binding: jobs.store.binding(web_session_id) ?? null }));
 
   server.registerTool("file_read", {
     title: "Read a local text file or image",

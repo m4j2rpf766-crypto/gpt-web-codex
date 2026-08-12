@@ -10,6 +10,7 @@ GPT Web Codex turns a normal ChatGPT Web conversation into the planner for local
 - Serializes Luna work inside one web session while allowing different web sessions to run independently.
 - Supports `read-only`, `workspace-write`, and `danger-full-access` execution modes.
 - Keeps long-running jobs alive when the ChatGPT reply finishes; jobs can be polled or cancelled explicitly.
+- Turns verified image artifacts from completed Luna jobs into native MCP image content and an inline preview instead of trusting a textual “displayed” claim.
 
 ## What it does not do
 
