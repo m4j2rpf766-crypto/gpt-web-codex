@@ -11,20 +11,16 @@ normal Chrome profile and normal `chatgpt.com/c/<conversation-id>` conversations
 4. Pin **GPT Web Codex** to the toolbar.
 5. Open `https://chatgpt.com`, then use the extension's **New conversation** button.
 
-Chrome displays a debugger notification briefly while the extension performs a trusted click or
-keypress. This is expected; it disappears as soon as that single input operation finishes.
+This version does not request Chrome's `debugger` permission and never attaches a debugger to a
+ChatGPT tab. Existing conversations are never bootstrapped again.
 
-The `debugger` permission is used only for short, trusted pointer/keyboard input while selecting
-Chat mode and submitting the two visible bootstrap messages. The extension detaches immediately
-after each input operation. Existing conversations are never bootstrapped again.
-
-Chrome **Developer mode** and the extension's `debugger` permission are separate:
+Chrome **Developer mode** is only an installation concern:
 
 - Loading this source directory unpacked requires Developer mode. A Chrome Web Store release can be
   installed normally without Developer mode.
-- Full automatic Chat/Work switching currently requires the `debugger` permission so Chrome can
-  deliver trusted input. A future no-debugger variant must either ask the user to select Chat
-  manually or use a separately installed native input helper.
+- The extension first attempts normal page controls. If ChatGPT rejects a synthetic Chat/Work
+  switch or send action, it asks the user for that one click and resumes only after verifying the
+  requested state.
 
 If an acknowledgement is already visible but ChatGPT's streaming control remains stuck, the
 extension waits five seconds, stops that completed acknowledgement, and resumes. Reloading an

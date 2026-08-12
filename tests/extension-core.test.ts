@@ -26,11 +26,14 @@ describe("Chrome extension conversation contract", () => {
     const source = await Bun.file(new URL("../extension/content.js", import.meta.url)).text();
     expect(source).toContain("await waitFor(() => assistantHas(text), text)");
     expect(source).toContain("naturalDeadline = Date.now() + 5000");
-    expect(source).toContain("point: point(stop)");
+    expect(source).toContain("stop.click()");
     expect(source).toContain('button[data-testid="send-button"]');
     expect(source).toContain("send.click()");
-    expect(source).toContain('type: "native-click", point: point(send)');
     expect(source).toContain('composerText() === "" || responseInProgress()');
+    expect(source).toContain("请手动点击页面顶部的“聊天”");
+    expect(source).toContain("请手动点击输入框右侧的发送按钮");
+    const manifest = await Bun.file(new URL("../extension/manifest.json", import.meta.url)).json();
+    expect(manifest.permissions).not.toContain("debugger");
     expect(source).not.toContain('type: "native-submit"');
     expect(source).toContain("当前是未由扩展初始化的既有会话");
     expect(source).toContain("if (!assistantHas(Core.LUNA_TOOL_BINDING_ACK))");

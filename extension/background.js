@@ -1,47 +1,9 @@
 "use strict";
 
-const DEBUG_VERSION = "1.3";
 const PENDING_PREFIX = "bootstrap:";
 
 function pendingKey(tabId) {
   return `${PENDING_PREFIX}${tabId}`;
-}
-
-async function withDebugger(tabId, action) {
-  const target = { tabId };
-  await chrome.debugger.attach(target, DEBUG_VERSION);
-  try {
-    return await action((method, params = {}) => chrome.debugger.sendCommand(target, method, params));
-  } finally {
-    await chrome.debugger.detach(target).catch(() => {});
-  }
-}
-
-async function trustedClick(tabId, point) {
-  return withDebugger(tabId, async send => {
-    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
-    await new Promise(resolve => setTimeout(resolve, 60));
-    await send("Input.dispatchMouseEvent", {
-      type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount: 1,
-    });
-    await new Promise(resolve => setTimeout(resolve, 60));
-    await send("Input.dispatchMouseEvent", {
-      type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 1,
-    });
-  });
-}
-
-async function trustedFill(tabId, point, text) {
-  return withDebugger(tabId, async send => {
-    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
-    await send("Input.dispatchMouseEvent", {
-      type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount: 1,
-    });
-    await send("Input.dispatchMouseEvent", {
-      type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 1,
-    });
-    await send("Input.insertText", { text });
-  });
 }
 
 async function upsertHistory(entry) {
@@ -55,16 +17,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "popup-new-conversation" || message?.type === "popup-open-conversation") return false;
   const tabId = sender.tab?.id;
   (async () => {
-    if (message?.type === "native-click") {
-      if (!tabId) throw new Error("The ChatGPT tab is unavailable");
-      await trustedClick(tabId, message.point);
-      return { ok: true };
-    }
-    if (message?.type === "native-fill") {
-      if (!tabId) throw new Error("The ChatGPT tab is unavailable");
-      await trustedFill(tabId, message.point, message.text);
-      return { ok: true };
-    }
     if (message?.type === "bootstrap-state") {
       if (!tabId) return { pending: false };
       const key = pendingKey(tabId);

@@ -16,11 +16,6 @@ function label(element) {
   return (element.getAttribute("aria-label") || element.textContent || "").replace(/\s+/g, " ").trim();
 }
 
-function point(element) {
-  const rect = element.getBoundingClientRect();
-  return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-}
-
 function selected(element) {
   return ["aria-selected", "aria-pressed", "aria-checked"].some(name => element.getAttribute(name) === "true")
     || ["active", "checked", "on", "selected"].includes(element.getAttribute("data-state"));
@@ -36,10 +31,10 @@ function inspectExperience() {
     const workSelected = selected(work);
     return {
       selected: chatSelected !== workSelected ? (chatSelected ? "chat" : "work") : null,
-      chatPoint: point(chat),
+      chatControl: chat,
     };
   }
-  return { selected: null, chatPoint: null };
+  return { selected: null, chatControl: null };
 }
 
 function composer() {
@@ -112,12 +107,29 @@ function setStatus(message, tone = "active") {
 async function ensureChatMode() {
   const mode = await waitFor(() => {
     const current = inspectExperience();
-    return current.chatPoint ? current : null;
+    return current.chatControl ? current : null;
   }, "the Chat/Work selector", 30000);
   if (mode.selected === "chat") return;
   setStatus("正在从“工作”切换到“聊天”…");
-  await request({ type: "native-click", point: mode.chatPoint });
-  await waitFor(() => inspectExperience().selected === "chat", "Chat mode", 5000);
+  mode.chatControl.click();
+  const switched = await waitFor(() => inspectExperience().selected === "chat", "Chat mode", 1500)
+    .catch(() => false);
+  if (switched) return;
+  setStatus("请手动点击页面顶部的“聊天”；确认切换后会自动继续");
+  await waitFor(() => inspectExperience().selected === "chat", "manual Chat mode selection", 180000);
+}
+
+function fillComposer(input, text) {
+  input.focus();
+  if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+    setter?.call(input, text);
+  } else {
+    input.textContent = "";
+    document.execCommand("insertText", false, text);
+  }
+  input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+  return Core.canonicalText(composerText(input)) === Core.canonicalText(text);
 }
 
 async function submit(text) {
@@ -127,7 +139,7 @@ async function submit(text) {
   if (draft && Core.canonicalText(draft) !== Core.canonicalText(text)) {
     throw new Error("输入框中存在其他未发送内容，已停止自动初始化以免覆盖");
   }
-  if (!draft) await request({ type: "native-fill", point: point(input), text });
+  if (!draft && !fillComposer(input, text)) throw new Error("ChatGPT 输入框未接受初始化文本");
   const send = await waitFor(sendButton, "the enabled ChatGPT send button", 15000);
   send.click();
   const accepted = await waitFor(
@@ -136,12 +148,8 @@ async function submit(text) {
     3000,
   ).catch(() => false);
   if (!accepted) {
-    await request({ type: "native-click", point: point(send) });
-    await waitFor(
-      () => composerText() === "" || responseInProgress(),
-      "ChatGPT to accept the trusted submitted prompt",
-      5000,
-    );
+    setStatus("请手动点击输入框右侧的发送按钮；发送后会自动继续");
+    await waitFor(() => composerText() === "" || responseInProgress(), "manual prompt submission", 180000);
   }
 }
 
@@ -154,7 +162,7 @@ async function waitForAcknowledgement(text) {
   const stop = responseStopButton();
   if (stop) {
     setStatus(`已收到 ${text}，正在结束停滞的网页生成…`);
-    await request({ type: "native-click", point: point(stop) });
+    stop.click();
   }
   await waitFor(() => !responseInProgress(), `${text} response completion`, 10000);
 }
