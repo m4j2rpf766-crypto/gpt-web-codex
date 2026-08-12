@@ -124,7 +124,9 @@ async function submit(text) {
   if (rateLimitDialogVisible()) throw new Error("ChatGPT 请求过于频繁；请等待几分钟后刷新此页面，扩展会继续初始化");
   const input = await waitFor(composer, "the ChatGPT composer", 30000);
   const draft = composerText(input);
-  if (draft && draft !== text.trim()) throw new Error("输入框中存在其他未发送内容，已停止自动初始化以免覆盖");
+  if (draft && Core.canonicalText(draft) !== Core.canonicalText(text)) {
+    throw new Error("输入框中存在其他未发送内容，已停止自动初始化以免覆盖");
+  }
   if (!draft) await request({ type: "native-fill", point: point(input), text });
   const send = await waitFor(sendButton, "the enabled ChatGPT send button", 15000);
   await request({ type: "native-click", point: point(send) });
@@ -192,7 +194,7 @@ function interruptedBootstrapIsRecoverable() {
   return Boolean(webSessionId)
     && assistantHas(Core.SESSION_MEMORY_BOUNDARY_ACK)
     && !assistantHas(Core.LUNA_TOOL_BINDING_ACK)
-    && composerText() === Core.toolBindingPrompt(webSessionId);
+    && Core.canonicalText(composerText()) === Core.canonicalText(Core.toolBindingPrompt(webSessionId));
 }
 
 async function start() {

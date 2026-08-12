@@ -23,6 +23,10 @@
     return id ? `chatgpt:${id}` : null;
   }
 
+  function canonicalText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
   function memoryBoundaryPrompt() {
     return [
       "【WebGPT Luna 会话边界声明｜由 GPT Web Codex 扩展自动发送，用户可见】",
@@ -54,6 +58,7 @@
     WORK_LABELS,
     conversationIdFromUrl,
     webSessionIdFromUrl,
+    canonicalText,
     memoryBoundaryPrompt,
     toolBindingPrompt,
   };

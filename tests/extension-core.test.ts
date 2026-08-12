@@ -18,6 +18,10 @@ describe("Chrome extension conversation contract", () => {
     expect(prompt).toContain(core.LUNA_TOOL_BINDING_ACK);
   });
 
+  test("normalizes rich composer paragraph spacing for interrupted drafts", () => {
+    expect(core.canonicalText("first\n\nsecond\n\nthird")).toBe(core.canonicalText("first\nsecond\nthird"));
+  });
+
   test("extension waits for response completion and clicks the real send control", async () => {
     const source = await Bun.file(new URL("../extension/content.js", import.meta.url)).text();
     expect(source).toContain("await waitFor(() => assistantHas(text), text)");
@@ -30,6 +34,6 @@ describe("Chrome extension conversation contract", () => {
     expect(source).toContain("if (!assistantHas(Core.LUNA_TOOL_BINDING_ACK))");
     expect(source).toContain("ChatGPT 请求过于频繁");
     expect(source).toContain("interruptedBootstrapIsRecoverable");
-    expect(source).toContain("composerText() === Core.toolBindingPrompt(webSessionId)");
+    expect(source).toContain("Core.canonicalText(composerText()) === Core.canonicalText(Core.toolBindingPrompt(webSessionId))");
   });
 });
