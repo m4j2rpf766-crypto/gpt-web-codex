@@ -1,0 +1,160 @@
+"use strict";
+
+const Core = globalThis.GptWebCodexCore;
+const STATUS_ID = "gpt-web-codex-status";
+let bootstrapRunning = false;
+
+function visible(element) {
+  if (!(element instanceof Element)) return false;
+  const style = getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+  return element.isConnected && rect.width > 0 && rect.height > 0
+    && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+}
+
+function label(element) {
+  return (element.getAttribute("aria-label") || element.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function point(element) {
+  const rect = element.getBoundingClientRect();
+  return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+}
+
+function selected(element) {
+  return ["aria-selected", "aria-pressed", "aria-checked"].some(name => element.getAttribute(name) === "true")
+    || ["active", "checked", "on", "selected"].includes(element.getAttribute("data-state"));
+}
+
+function inspectExperience() {
+  for (const group of [...document.querySelectorAll('[role="radiogroup"]')].filter(visible)) {
+    const radios = [...group.querySelectorAll('[role="radio"]')].filter(visible);
+    const chat = radios.find(element => Core.CHAT_LABELS.has(label(element)));
+    const work = radios.find(element => Core.WORK_LABELS.has(label(element)));
+    if (!chat || !work) continue;
+    const chatSelected = selected(chat);
+    const workSelected = selected(work);
+    return {
+      selected: chatSelected !== workSelected ? (chatSelected ? "chat" : "work") : null,
+      chatPoint: point(chat),
+    };
+  }
+  return { selected: null, chatPoint: null };
+}
+
+function composer() {
+  return [...document.querySelectorAll('#prompt-textarea, [contenteditable="true"][data-lexical-editor="true"]')].find(visible) || null;
+}
+
+function assistantHas(text) {
+  return [...document.querySelectorAll('[data-message-author-role="assistant"]')]
+    .some(element => (element.innerText || element.textContent || "").includes(text));
+}
+
+async function waitFor(probe, description, timeoutMs = 180000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = probe();
+    if (result) return result;
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error(`Timed out waiting for ${description}`);
+}
+
+async function request(message) {
+  const response = await chrome.runtime.sendMessage(message);
+  if (response?.ok === false) throw new Error(response.error || "Extension operation failed");
+  return response;
+}
+
+function setStatus(message, tone = "active") {
+  let status = document.getElementById(STATUS_ID);
+  if (!status) {
+    status = document.createElement("div");
+    status.id = STATUS_ID;
+    Object.assign(status.style, {
+      position: "fixed", right: "20px", bottom: "20px", zIndex: "2147483647",
+      maxWidth: "360px", padding: "12px 14px", borderRadius: "12px",
+      color: "white", font: "13px/1.45 system-ui, sans-serif", boxShadow: "0 8px 32px #0008",
+    });
+    document.documentElement.append(status);
+  }
+  status.style.background = tone === "error" ? "#8b1d1d" : tone === "done" ? "#176b3a" : "#202123";
+  status.textContent = message;
+  if (tone === "done") setTimeout(() => status.remove(), 5000);
+}
+
+async function ensureChatMode() {
+  const mode = await waitFor(() => {
+    const current = inspectExperience();
+    return current.chatPoint ? current : null;
+  }, "the Chat/Work selector", 30000);
+  if (mode.selected === "chat") return;
+  setStatus("正在从“工作”切换到“聊天”…");
+  await request({ type: "native-click", point: mode.chatPoint });
+  await waitFor(() => inspectExperience().selected === "chat", "Chat mode", 5000);
+}
+
+async function submit(text) {
+  const input = await waitFor(composer, "the ChatGPT composer", 30000);
+  await request({ type: "native-submit", point: point(input), text });
+}
+
+async function bootstrap() {
+  if (bootstrapRunning) return;
+  bootstrapRunning = true;
+  try {
+    if (Core.conversationIdFromUrl(location.href)) throw new Error("Initialization requires a blank new conversation");
+    setStatus("正在确认 ChatGPT 聊天模式…");
+    await ensureChatMode();
+    setStatus("正在声明本次会话的记忆边界…");
+    await submit(Core.memoryBoundaryPrompt());
+    await waitFor(() => assistantHas(Core.SESSION_MEMORY_BOUNDARY_ACK), Core.SESSION_MEMORY_BOUNDARY_ACK);
+    const webSessionId = await waitFor(() => Core.webSessionIdFromUrl(location.href), "a stable /c/ conversation URL", 60000);
+    setStatus("正在绑定 WebGPT Luna 本地工具…");
+    await submit(Core.toolBindingPrompt(webSessionId));
+    await waitFor(() => assistantHas(Core.LUNA_TOOL_BINDING_ACK), Core.LUNA_TOOL_BINDING_ACK);
+    if (Core.webSessionIdFromUrl(location.href) !== webSessionId) throw new Error("The conversation changed during initialization");
+    localStorage.setItem(`webgpt.boundary.${webSessionId}`, "1");
+    await request({ type: "bootstrap-finished" });
+    await captureHistory();
+    setStatus("GPT Web Codex 初始化完成", "done");
+  } catch (error) {
+    setStatus(`GPT Web Codex 初始化失败：${error.message}`, "error");
+  } finally {
+    bootstrapRunning = false;
+  }
+}
+
+async function captureHistory() {
+  const id = Core.conversationIdFromUrl(location.href);
+  if (!id) return;
+  const title = (document.title || "ChatGPT conversation").replace(/\s*[—-]\s*ChatGPT\s*$/i, "").trim();
+  await request({
+    type: "history-upsert",
+    entry: { id, title: title || "ChatGPT conversation", url: `https://chatgpt.com/c/${id}`, updatedAt: Date.now() },
+  });
+}
+
+async function start() {
+  await captureHistory().catch(() => {});
+  const state = await request({ type: "bootstrap-state" }).catch(() => ({ pending: false }));
+  if (state.pending) await bootstrap();
+}
+
+void start();
+let lastUrl = location.href;
+let lastTitle = document.title;
+new MutationObserver(() => {
+  if (location.href === lastUrl && document.title === lastTitle) return;
+  lastUrl = location.href;
+  lastTitle = document.title;
+  void captureHistory().catch(() => {});
+}).observe(document.documentElement, { childList: true, subtree: true });
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "session" || Core.conversationIdFromUrl(location.href)) return;
+  if (Object.keys(changes).some(key => key.startsWith("bootstrap:") && changes[key].newValue)) {
+    void bootstrap();
+  }
+});

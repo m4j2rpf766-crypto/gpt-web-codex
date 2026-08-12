@@ -1,0 +1,13 @@
+:root { color-scheme: dark; font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+body { width: 320px; margin: 0; padding: 16px; background: #171717; color: #f5f5f5; }
+header { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; font-size: 15px; }
+.mark { color: #38d996; }
+button { width: 100%; border: 0; border-radius: 9px; padding: 10px 12px; color: inherit; text-align: left; cursor: pointer; }
+.primary { background: #2f7df4; font-weight: 600; }
+.primary:hover { background: #3c88fa; }
+#status { min-height: 18px; margin: 10px 2px 15px; color: #aaa; font-size: 12px; }
+h2 { margin: 0 0 8px; color: #aaa; font-size: 12px; font-weight: 600; }
+.history { display: grid; gap: 4px; max-height: 330px; overflow-y: auto; }
+.history button { background: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history button:hover { background: #292929; }
+.empty { color: #777; font-size: 12px; padding: 8px 2px; }
