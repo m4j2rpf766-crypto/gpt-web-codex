@@ -850,7 +850,7 @@ test("the explicit new-conversation action opens a blank chat and performs the o
   assert.equal(result.url, "https://chatgpt.com/");
 });
 
-test("a new conversation selects Chat before sending any initial binding prompt", () => {
+test("a new conversation verifies Chat before sending any initial binding prompt", async () => {
   const source = fs.readFileSync(require.resolve("../electron/browser-host.cjs"), "utf8");
   const newConversation = source.slice(
     source.indexOf("async newConversation()"),
@@ -859,7 +859,25 @@ test("a new conversation selects Chat before sending any initial binding prompt"
   assert.match(newConversation, /waitForAuthenticated\(\)[\s\S]*?ensureChatExperience\(\)[\s\S]*?ensureSessionBootstrap\(\)/);
   assert.match(source, /CHAT_EXPERIENCE_LABELS = \["Chat", "聊天"\]/);
   assert.match(source, /WORK_EXPERIENCE_LABELS = \["Work", "工作"\]/);
-  assert.match(source, /work_selected_without_chat_control/);
+  assert.match(source, /outcome\.selected !== "chat"/);
+  assert.match(source, /selection_ambiguous/);
+  assert.match(source, /selected_surface/);
+  assert.match(source, /querySelectorAll\('\[role="radiogroup"\]'\)/);
+
+  const accepted = Object.assign(Object.create(BrowserHost.prototype), {
+    view: { webContents: { executeJavaScript: async () => ({ ok: true, selected: "chat", reason: "semantic_marker", switched: false }), getURL: () => "https://chatgpt.com/" } },
+    logger: { info() {} },
+  });
+  await BrowserHost.prototype.ensureChatExperience.call(accepted);
+
+  const ambiguous = Object.assign(Object.create(BrowserHost.prototype), {
+    view: { webContents: { executeJavaScript: async () => ({ ok: false, selected: null, reason: "selection_ambiguous", switched: true }) } },
+    logger: { info() {} },
+  });
+  await assert.rejects(
+    () => BrowserHost.prototype.ensureChatExperience.call(ambiguous),
+    /could not be verified \(selection_ambiguous\)/,
+  );
 });
 
 test("a saved conversation opens its exact ChatGPT URL without initial binding", async () => {

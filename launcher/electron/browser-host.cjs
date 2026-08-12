@@ -1050,7 +1050,7 @@ class BrowserHost {
     const contents = this.view.webContents;
     const chatLabels = javaScriptLiteral(CHAT_EXPERIENCE_LABELS);
     const workLabels = javaScriptLiteral(WORK_EXPERIENCE_LABELS);
-    const outcome = await contents.executeJavaScript(`(() => {
+    const outcome = await contents.executeJavaScript(`(async () => {
       const visible = (element) => {
         const style = getComputedStyle(element);
         const rect = element.getBoundingClientRect();
@@ -1061,30 +1061,96 @@ class BrowserHost {
         .replace(/\\s+/g, " ").trim();
       const chatLabels = new Set(${chatLabels});
       const workLabels = new Set(${workLabels});
-      const controls = [...document.querySelectorAll('button, [role="tab"], [role="radio"]')]
+      const controls = () => [...document.querySelectorAll('button, [role="tab"], [role="radio"], [role="switch"]')]
         .filter(visible);
-      for (const chat of controls.filter(element => chatLabels.has(label(element)))) {
-        let group = chat.parentElement;
-        for (let depth = 0; group && depth < 5; depth += 1, group = group.parentElement) {
-          const groupedControls = controls.filter(element => group.contains(element));
-          const work = groupedControls.find(element => workLabels.has(label(element)));
-          if (!work) continue;
-          chat.click();
-          return { ok: true, switched: true };
+      const marker = (element, boundary) => {
+        for (let node = element; node && node !== boundary; node = node.parentElement) {
+          if (["aria-selected", "aria-pressed", "aria-checked"].some(name => node.getAttribute(name) === "true")) {
+            return true;
+          }
+          if (["active", "checked", "on", "selected"].includes(node.getAttribute("data-state"))) return true;
+          if (node.getAttribute("data-selected") === "true" || node.getAttribute("data-active") === "true") return true;
+          if (String(node.className).split(/\\s+/).some(name => /^(?:is-)?(?:active|checked|selected)$/i.test(name))) {
+            return true;
+          }
+        }
+        return false;
+      };
+      const color = (value) => {
+        const values = value.match(/[\\d.]+/g)?.map(Number) || [];
+        return values.length >= 3 ? [values[0], values[1], values[2], values[3] ?? 1] : [0, 0, 0, 0];
+      };
+      const visualDistance = (element, boundary) => {
+        const foreground = color(getComputedStyle(element).backgroundColor);
+        const background = color(getComputedStyle(boundary).backgroundColor);
+        const alpha = foreground[3];
+        const composited = foreground.slice(0, 3).map((channel, index) => channel * alpha + background[index] * (1 - alpha));
+        const distance = Math.sqrt(composited.reduce((sum, channel, index) => sum + (channel - background[index]) ** 2, 0));
+        const shadow = getComputedStyle(element).boxShadow;
+        return distance + (shadow && shadow !== "none" ? 8 : 0);
+      };
+      const findPair = () => {
+        const candidates = controls();
+        for (const group of [...document.querySelectorAll('[role="radiogroup"]')].filter(visible)) {
+          const radios = candidates.filter(element => element.getAttribute("role") === "radio" && group.contains(element));
+          const chat = radios.find(element => chatLabels.has(label(element)));
+          const work = radios.find(element => workLabels.has(label(element)));
+          if (chat && work) return { chat, work, group };
+        }
+        for (const chat of candidates.filter(element => chatLabels.has(label(element)))) {
+          let group = chat.parentElement;
+          for (let depth = 0; group && depth < 2; depth += 1, group = group.parentElement) {
+            const groupedControls = candidates.filter(element => group.contains(element));
+            const work = groupedControls.find(element => workLabels.has(label(element)));
+            if (!work) continue;
+            const chatRect = chat.getBoundingClientRect();
+            const workRect = work.getBoundingClientRect();
+            if (Math.abs(chatRect.y - workRect.y) > 8 || Math.abs(chatRect.height - workRect.height) > 8) continue;
+            return { chat, work, group };
+          }
+        }
+        return null;
+      };
+      const inspect = () => {
+        const pair = findPair();
+        if (!pair) return { selected: null, reason: "chat_work_controls_missing" };
+        const chatMarked = marker(pair.chat, pair.group);
+        const workMarked = marker(pair.work, pair.group);
+        if (chatMarked !== workMarked) {
+          return { selected: chatMarked ? "chat" : "work", reason: "semantic_marker", pair };
+        }
+        const chatDistance = visualDistance(pair.chat, pair.group);
+        const workDistance = visualDistance(pair.work, pair.group);
+        if (Math.abs(chatDistance - workDistance) >= 4) {
+          return {
+            selected: chatDistance > workDistance ? "chat" : "work",
+            reason: "selected_surface",
+            pair,
+          };
+        }
+        return { selected: null, reason: "selection_ambiguous", pair };
+      };
+      let inspected = inspect();
+      if (!inspected.pair) return { ok: false, selected: inspected.selected, reason: inspected.reason };
+      let switched = false;
+      if (inspected.selected !== "chat") {
+        inspected.pair.chat.click();
+        switched = true;
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          inspected = inspect();
+          if (inspected.selected === "chat") break;
         }
       }
-      const selectedWork = controls.some(element => workLabels.has(label(element)) && (
-        element.getAttribute("aria-selected") === "true"
-        || element.getAttribute("aria-pressed") === "true"
-        || element.getAttribute("data-state") === "active"
-        || element.getAttribute("data-selected") === "true"
-      ));
-      return selectedWork
-        ? { ok: false, reason: "work_selected_without_chat_control" }
-        : { ok: true, switched: false };
+      return {
+        ok: inspected.selected === "chat",
+        selected: inspected.selected,
+        reason: inspected.reason,
+        switched,
+      };
     })()`, true);
-    if (!outcome?.ok) {
-      throw new Error(`ChatGPT is in Work mode and Chat mode could not be selected (${outcome?.reason || "unknown"})`);
+    if (!outcome?.ok || outcome.selected !== "chat") {
+      throw new Error(`ChatGPT Chat mode could not be verified (${outcome?.reason || "unknown"})`);
     }
     if (outcome.switched) {
       await sleep(750);
@@ -1093,7 +1159,11 @@ class BrowserHost {
         throw new Error("Selecting Chat opened an existing conversation instead of a blank chat");
       }
     }
-    this.logger.info("browser.chat_experience_selected", { switched: outcome.switched === true });
+    this.logger.info("browser.chat_experience_selected", {
+      selected: outcome.selected,
+      evidence: outcome.reason,
+      switched: outcome.switched === true,
+    });
   }
 
   async openConversation(conversationId) {
