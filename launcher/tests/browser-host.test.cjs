@@ -743,6 +743,35 @@ test("launcher restores only a valid persisted normal conversation URL", async (
   assert.deepEqual(loads, ["https://chatgpt.com/"]);
 });
 
+test("opening ChatGPT normalizes a restored temporary chat before showing the browser", async () => {
+  let currentUrl = "https://chatgpt.com/?temporary-chat=true";
+  const calls = [];
+  const fixture = {
+    selectedTurnTab: () => null,
+    view: {
+      webContents: {
+        getURL: () => currentUrl,
+        loadURL: async url => {
+          calls.push(["load", url]);
+          currentUrl = url;
+        },
+      },
+    },
+    probeAuthentication: async () => calls.push(["probe"]),
+    show: () => calls.push(["show"]),
+    snapshot: () => ({ url: currentUrl }),
+  };
+
+  const result = await BrowserHost.prototype.reveal.call(fixture);
+
+  assert.deepEqual(calls, [
+    ["load", "https://chatgpt.com/"],
+    ["probe"],
+    ["show"],
+  ]);
+  assert.equal(result.url, "https://chatgpt.com/");
+});
+
 test("existing conversation bootstrap is idempotent and a new chat receives its exact stable binding", async () => {
   const existingPrompts = [];
   const existing = Object.assign(Object.create(BrowserHost.prototype), {

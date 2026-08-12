@@ -975,11 +975,20 @@ class BrowserHost {
   }
 
   async reveal() {
-    this.show();
-    if (!this.selectedTurnTab() && this.view.webContents.getURL() === IDLE_BROWSER_URL) {
-      await this.openLastConversationOrHome();
-      await this.probeAuthentication();
+    if (!this.selectedTurnTab()) {
+      const url = this.view.webContents.getURL();
+      if (url === IDLE_BROWSER_URL) {
+        await this.openLastConversationOrHome();
+        await this.probeAuthentication();
+      } else if (isTemporaryChatUrl(url)) {
+        // Startup authentication can briefly restore ChatGPT's previously selected Temporary
+        // Chat mode. Normalize it while the owned surface is still hidden so Open ChatGPT never
+        // presents a private conversation as the launcher's default.
+        await this.view.webContents.loadURL(NORMAL_CHAT_URL);
+        await this.probeAuthentication();
+      }
     }
+    this.show();
     return this.snapshot();
   }
 
