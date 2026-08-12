@@ -18,6 +18,7 @@ redesign.
 Expose both tool families by default:
 
 1. High-level asynchronous Luna tools:
+   - `codexluna_init`
    - `codexluna_start`
    - `codexluna_status`
    - `codexluna_continue`
@@ -30,37 +31,33 @@ session is serialized. Separate Web conversations may run independently.
 
 ## Conversation and Luna session identity
 
-- Derive the durable Web session identity from the stable normal-chat URL, normally its
-  `/c/<conversation-id>` component; a browser tab id is not a durable identity.
-- Bind one Luna session to one Web conversation and persist the mapping across launcher restarts.
+- Do not require a browser extension or address-bar access to derive identity.
+- On the first `codexluna_init` call in a ChatGPT conversation, generate a durable, opaque
+  `web_session_id` unless the same conversation is explicitly restoring its existing id.
+- Return the id as structured MCP output. ChatGPT must reuse it only inside the same conversation.
+- Bind one Luna session to one Web conversation and persist the mapping across runtime restarts.
 - Returning to the same ChatGPT conversation restores the prior Luna session when it remains
-  resumable.
-- Before the URL receives a stable conversation id, use a provisional local identity and migrate it
-  atomically after navigation exposes the stable id.
+  resumable. Never automatically reuse one conversation's binding in another conversation.
 
 ## Session memory boundary
 
-The launcher restores the last valid `chatgpt.com/c/<conversation-id>` URL on startup without
-replaying bootstrap messages. Only the explicit **New conversation** action opens a blank normal
-chat, shows a visible local notice, and automatically sends the visible bootstrap messages to
-ChatGPT. Keep the messages and acknowledgements in that new chat.
+The MCP server exposes the boundary in its server instructions and returns the complete policy from
+`codexluna_init`. Do not type bootstrap messages into the ChatGPT composer and do not require an ACK.
 
-Bootstrap message:
+The returned policy must state that Web binding data, Luna context, task state, workspace details,
+local execution records, summaries, preferences, paths, files, code, results, and inferred details
+are scoped to the current `web_session_id`. ChatGPT must not actively write, update, merge, sync, or
+migrate them into cross-conversation long-term memory, and must not reuse another conversation's
+local binding.
 
-> 会话上下文边界声明：
->
-> 本对话是一个独立、会话级的工作空间。本对话中出现的所有内容，包括用户信息、偏好、路径、文件内容、代码、工具调用、Luna 执行结果、项目决策和工作习惯，仅可用于理解和完成本对话内的任务。
->
-> 不要主动将这些内容保存、更新、推断或推荐保存为任何跨对话、长期或账户级记忆；不要在其他对话中引用或延续这些内容。已有的跨对话记忆不得覆盖本对话中的明确指令，与当前任务无关的既有记忆也不要主动引入。
->
-> 此边界同样适用于后续所有 MCP 工具结果和 Luna session 内容，直到用户在本对话中明确撤销为止。
->
-> 如果账户或产品存在你无法直接控制的自动记忆机制，不要声称它已被本提示关闭。本声明是对本次对话行为的约束，不代表修改了用户的 ChatGPT 账户设置。
->
-> 请仅回复：`SESSION_MEMORY_BOUNDARY_ACK`
+Local persistence of the Luna session, task state, and necessary logs is allowed only to resume the
+same Web conversation. Every later `codexluna_*` result repeats a compact policy marker so the
+boundary survives long conversations and context compaction.
 
-The launcher must disclose that this prompt does not change account-level ChatGPT Memory settings.
-Tools remain disabled until the acknowledgement is observed.
+The initialization result must disclose that MCP cannot change or disable the ChatGPT account's
+product-level Memory settings or directly control product-managed automatic memory behavior. Show
+the resolved workspace, permission mode, and a concise boundary notice, then continue the authorized
+task without asking for a confirmation token.
 
 ## Luna execution defaults
 

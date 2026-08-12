@@ -5,6 +5,13 @@ export type LunaJobStatus = "queued" | "running" | "completed" | "failed" | "tim
 export interface LunaSessionBinding {
   webSessionId: string;
   lunaSessionId?: string;
+  workspacePath?: string;
+  permissionMode?: LunaSandbox;
+  model?: string;
+  reasoning?: LunaReasoning;
+  fast?: boolean;
+  timeoutMs?: number;
+  sessionPolicyVersion?: number;
   createdAt: string;
   updatedAt: string;
   lastJobId?: string;

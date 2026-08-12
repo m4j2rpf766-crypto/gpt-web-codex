@@ -276,11 +276,45 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
   const client = new Client({ name: "webgpt-standalone-test", version: "1.0.0" });
   try {
     await client.connect(transport);
+    expect(client.getInstructions()).toContain("Use codexluna_init before the first codexluna_start");
+    expect(client.getInstructions()).toContain("不得主动把本对话中的内容");
+    expect(client.getInstructions()).toContain("无需要求用户回复确认口令");
     const names = (await client.listTools()).tools.map(tool => tool.name).sort();
     expect(names).toEqual([
-      "codexluna_cancel", "codexluna_session", "codexluna_start", "codexluna_status",
+      "codexluna_cancel", "codexluna_init", "codexluna_session", "codexluna_start", "codexluna_status",
       "file_image_preview", "file_list", "file_read", "file_search", "file_write", "terminal_cancel", "terminal_start", "terminal_status",
     ]);
+    const initialized = await client.callTool({
+      name: "codexluna_init",
+      arguments: { workspace_path: root },
+    });
+    expect(initialized.isError).not.toBe(true);
+    const init = initialized.structuredContent as {
+      web_session_id: string;
+      session_policy: Record<string, unknown>;
+      session_boundary_notice: string;
+    };
+    expect(init.web_session_id).toMatch(/^webgpt:[0-9a-f-]{36}$/);
+    expect(init.session_policy).toMatchObject({
+      scope: "current_web_session_only",
+      allow_long_term_memory_write: false,
+      allow_long_term_memory_update: false,
+      allow_cross_chat_migration: false,
+      allow_same_session_persistence: true,
+      requires_acknowledgement: false,
+    });
+    expect(init.session_boundary_notice).toContain("不得主动把本对话中的内容");
+    expect(init.session_boundary_notice).toContain("不会修改或关闭 ChatGPT 账户");
+    const initializedState = new LunaStateStore(join(root, "state.json")).binding(init.web_session_id);
+    expect(initializedState).toMatchObject({
+      workspacePath: root,
+      permissionMode: "workspace-write",
+      model: "gpt-5.6-luna",
+      reasoning: "high",
+      fast: true,
+      timeoutMs: 900_000,
+      sessionPolicyVersion: 1,
+    });
     const binding = await client.callTool({
       name: "codexluna_session",
       arguments: { web_session_id: "conversation-standalone-123" },

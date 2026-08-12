@@ -1,7 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { atomicWriteFile, getConfigDir } from "../config";
-import type { LunaJob, LunaSessionBinding, LunaState } from "./types";
+import type { LunaJob, LunaReasoning, LunaSandbox, LunaSessionBinding, LunaState } from "./types";
+
+export interface InitializeSessionBindingInput {
+  workspacePath: string;
+  permissionMode: LunaSandbox;
+  model: string;
+  reasoning: LunaReasoning;
+  fast: boolean;
+  timeoutMs: number;
+  sessionPolicyVersion: number;
+}
 
 export function defaultStandaloneStatePath(home = getConfigDir()): string {
   return join(home, "standalone", "state.json");
@@ -52,6 +62,13 @@ export class LunaStateStore {
     const now = new Date().toISOString();
     const binding = { webSessionId, createdAt: now, updatedAt: now };
     this.state.sessions[webSessionId] = binding;
+    this.save();
+    return binding;
+  }
+
+  initializeBinding(webSessionId: string, input: InitializeSessionBindingInput): LunaSessionBinding {
+    const binding = this.ensureBinding(webSessionId);
+    Object.assign(binding, input, { updatedAt: new Date().toISOString() });
     this.save();
     return binding;
   }

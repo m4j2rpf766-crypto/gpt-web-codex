@@ -1,9 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { randomUUID } from "node:crypto";
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import * as z from "zod/v4";
 import { DirectToolService } from "../../standalone/direct-tools";
 import { IMAGE_PREVIEW_HTML, IMAGE_PREVIEW_MIME_TYPE, IMAGE_PREVIEW_RESOURCE_URI } from "../../standalone/image-preview";
 import { LunaJobManager } from "../../standalone/luna-jobs";
+import {
+  COMPACT_SESSION_POLICY,
+  MCP_SERVER_INSTRUCTIONS,
+  SESSION_BOUNDARY_NOTICE,
+  SESSION_POLICY,
+  SESSION_POLICY_VERSION,
+} from "../../standalone/session-policy";
 import { LunaStateStore } from "../../standalone/state-store";
 
 const sessionId = z.string().min(8).max(256);
@@ -16,6 +26,10 @@ function result(value: Record<string, unknown>, isError = false) {
     structuredContent: value,
     ...(isError ? { isError: true } : {}),
   };
+}
+
+function lunaResult(value: Record<string, unknown>, isError = false) {
+  return result({ ...value, session_policy: COMPACT_SESSION_POLICY }, isError);
 }
 
 function fileReadResult(value: ReturnType<DirectToolService["read"]>) {
@@ -60,7 +74,10 @@ function fileImagePreviewResult(value: ReturnType<DirectToolService["read"]>) {
 export async function runChatGptMcpServer(options: { statePath?: string } = {}): Promise<void> {
   const jobs = new LunaJobManager(new LunaStateStore(options.statePath));
   const direct = new DirectToolService();
-  const server = new McpServer({ name: "webgpt-luna", version: "0.2.1" });
+  const server = new McpServer(
+    { name: "webgpt-luna", version: "0.3.0" },
+    { instructions: MCP_SERVER_INSTRUCTIONS },
+  );
   const shutdown = () => {
     jobs.shutdown();
     direct.shutdown();
@@ -93,12 +110,11 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     }],
   }));
 
-  server.registerTool("codexluna_start", {
-    title: "Start Luna execution",
-    description: "Start an asynchronous Codex Luna task for this ChatGPT conversation. Tasks in one web_session_id run serially and reuse its Luna session.",
+  server.registerTool("codexluna_init", {
+    title: "Initialize this ChatGPT conversation",
+    description: "Initialize or restore the GPT Web Codex binding for the current ChatGPT conversation before its first Luna task. Omit web_session_id to create a new conversation-scoped ID. Reuse a returned ID only in the same ChatGPT conversation. Return the complete session-memory boundary and visibly summarize it without asking the user for an ACK.",
     inputSchema: {
-      web_session_id: sessionId,
-      prompt: z.string().min(1).max(1_000_000),
+      web_session_id: sessionId.optional(),
       workspace_path: z.string().min(1).max(16_384),
       model: z.string().min(1).max(200).default("gpt-5.6-luna"),
       reasoning_effort: reasoning.default("high"),
@@ -106,19 +122,66 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
       permission_mode: sandbox.default("workspace-write"),
       timeout_ms: z.number().int().min(1_000).max(86_400_000).default(900_000),
     },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async input => {
-    const job = jobs.start({
-      webSessionId: input.web_session_id,
-      prompt: input.prompt,
-      cwd: input.workspace_path,
+    const webSessionId = input.web_session_id?.trim() || `webgpt:${randomUUID()}`;
+    const workspacePath = resolve(input.workspace_path.trim());
+    if (!existsSync(workspacePath) || !statSync(workspacePath).isDirectory()) {
+      throw new Error(`Workspace directory does not exist: ${workspacePath}`);
+    }
+    const binding = jobs.store.initializeBinding(webSessionId, {
+      workspacePath,
+      permissionMode: input.permission_mode,
       model: input.model,
       reasoning: input.reasoning_effort,
       fast: input.fast,
-      sandbox: input.permission_mode,
       timeoutMs: input.timeout_ms,
+      sessionPolicyVersion: SESSION_POLICY_VERSION,
     });
-    return result({ job_id: job.id, status: job.status, workspace_path: job.cwd, permission_mode: job.sandbox, timeout_ms: job.timeoutMs });
+    return result({
+      initialized: true,
+      web_session_id: webSessionId,
+      workspace_path: binding.workspacePath,
+      permission_mode: binding.permissionMode,
+      model: binding.model,
+      reasoning_effort: binding.reasoning,
+      fast: binding.fast,
+      timeout_ms: binding.timeoutMs,
+      luna_session_id: binding.lunaSessionId ?? null,
+      session_policy: SESSION_POLICY,
+      session_boundary_notice: SESSION_BOUNDARY_NOTICE,
+    });
+  });
+
+  server.registerTool("codexluna_start", {
+    title: "Start Luna execution",
+    description: "Start an asynchronous Codex Luna task after codexluna_init. Tasks in one web_session_id run serially and reuse its Luna session. Reuse that ID only in the same ChatGPT conversation. Omitted execution settings inherit the initialized binding.",
+    inputSchema: {
+      web_session_id: sessionId,
+      prompt: z.string().min(1).max(1_000_000),
+      workspace_path: z.string().min(1).max(16_384).optional(),
+      model: z.string().min(1).max(200).optional(),
+      reasoning_effort: reasoning.optional(),
+      fast: z.boolean().optional(),
+      permission_mode: sandbox.optional(),
+      timeout_ms: z.number().int().min(1_000).max(86_400_000).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  }, async input => {
+    const binding = jobs.store.binding(input.web_session_id);
+    const workspacePath = input.workspace_path ?? binding?.workspacePath;
+    if (!workspacePath) throw new Error("codexluna_init must be called before codexluna_start, or workspace_path must be provided");
+    const job = jobs.start({
+      webSessionId: input.web_session_id,
+      prompt: input.prompt,
+      cwd: workspacePath,
+      model: input.model ?? binding?.model,
+      reasoning: input.reasoning_effort ?? binding?.reasoning,
+      fast: input.fast ?? binding?.fast,
+      sandbox: input.permission_mode ?? binding?.permissionMode,
+      timeoutMs: input.timeout_ms ?? binding?.timeoutMs,
+    });
+    return lunaResult({ web_session_id: job.webSessionId, job_id: job.id, status: job.status, workspace_path: job.cwd, permission_mode: job.sandbox, timeout_ms: job.timeoutMs });
   });
 
   server.registerTool("codexluna_status", {
@@ -128,7 +191,8 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ job_id }) => {
     const job = jobs.get(job_id);
-    return result({
+    return lunaResult({
+      web_session_id: job.webSessionId,
       job_id: job.id, status: job.status, luna_session_id: job.lunaSessionId ?? null,
       workspace_path: job.cwd, terminal_event: job.terminalEvent ?? null, final_message: job.finalMessage ?? null,
       error: job.error ?? null, mutation_seen: job.mutationSeen, event_count: job.eventCount,
@@ -140,14 +204,17 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     description: "Cancel only the owned Luna process for a queued or running task; the conversation binding is preserved.",
     inputSchema: { job_id: z.string().uuid() },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, async ({ job_id }) => result({ ...jobs.cancel(job_id) }));
+  }, async ({ job_id }) => {
+    const job = jobs.cancel(job_id);
+    return lunaResult({ ...job, web_session_id: job.webSessionId });
+  });
 
   server.registerTool("codexluna_session", {
     title: "Inspect Luna session binding",
     description: "Inspect the durable Luna session bound to a ChatGPT web conversation.",
     inputSchema: { web_session_id: sessionId },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async ({ web_session_id }) => result({ binding: jobs.store.ensureBinding(web_session_id) }));
+  }, async ({ web_session_id }) => lunaResult({ binding: jobs.store.ensureBinding(web_session_id) }));
 
   server.registerTool("file_read", {
     title: "Read a local text file or image",

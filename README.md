@@ -23,7 +23,7 @@ normal ChatGPT conversation
         ▼
 OpenAI Tunnel → standalone local MCP runtime
         │
-        ├─ codexluna_start/status/cancel/session
+        ├─ codexluna_init/start/status/cancel/session
         ├─ file_read (text + native MCP images + inline preview) / list / search / write
         └─ terminal_start/status/cancel
                  │
@@ -63,7 +63,7 @@ bun run launcher:test
 
 ## Security boundary
 
-The launcher keeps ChatGPT browser state and tunnel credentials in private local storage and redacts them from logs. Workspace and permission mode are disclosed before local execution. The visible session-memory notice is prompt-level guidance; it cannot change the ChatGPT account's product-level Memory setting.
+The launcher keeps ChatGPT browser state and tunnel credentials in private local storage and redacts them from logs. `codexluna_init` returns the resolved workspace, permission mode, durable session ID, and a visible session-memory boundary before local execution. That boundary is prompt-level guidance; it cannot change the ChatGPT account's product-level Memory setting.
 
 This is independent, unofficial browser automation. It can break when ChatGPT's UI changes and must not be used to evade usage limits or access controls.
 
