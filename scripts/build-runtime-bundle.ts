@@ -5,8 +5,10 @@ import { VERSION } from "../src/version";
 
 const root = resolve(import.meta.dir, "..");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+  name?: string;
   version?: string;
   packageManager?: string;
+  dependencies?: Record<string, string>;
 };
 if (packageJson.version !== VERSION) throw new Error("package.json and runtime version are out of sync");
 const packageManagerMatch = /^bun@(\d+\.\d+\.\d+)$/.exec(packageJson.packageManager ?? "");
@@ -45,27 +47,12 @@ const build = await Bun.build({
   entrypoints: [join(root, "src", "cli.ts")],
   target: "bun",
   minify: true,
-  external: ["playwright-core"],
   packages: "external",
   outdir: appDir,
   naming: "cli.js",
 });
 if (!build.success) {
   throw new Error(`Runtime bundle failed: ${build.logs.map(log => log.message).join("; ")}`);
-}
-
-const browserHelperBuild = await Bun.build({
-  entrypoints: [join(root, "src", "adapters", "chatgpt-web", "browser-helper-main.ts")],
-  target: "node",
-  format: "cjs",
-  minify: true,
-  external: ["playwright-core"],
-  packages: "external",
-  outdir: appDir,
-  naming: "browser-helper.cjs",
-});
-if (!browserHelperBuild.success) {
-  throw new Error(`Browser helper bundle failed: ${browserHelperBuild.logs.map(log => log.message).join("; ")}`);
 }
 
 copyFileSync(join(root, "package.json"), join(appDir, "package.json"));
@@ -78,6 +65,15 @@ const install = Bun.spawnSync([process.execPath, "install", "--production", "--f
 if (install.exitCode !== 0) {
   throw new Error(`Runtime dependencies failed to install: ${install.stderr.toString() || install.stdout.toString()}`);
 }
+writeFileSync(join(appDir, "package.json"), `${JSON.stringify({
+  name: packageJson.name,
+  version: packageJson.version,
+  private: true,
+  type: "module",
+  description: "Production-only GPT Web Codex MCP runtime",
+  dependencies: packageJson.dependencies,
+}, null, 2)}\n`);
+rmSync(join(appDir, "bun.lock"), { force: true });
 const bunName = process.platform === "win32" ? "bun.exe" : "bun";
 cpSync(embeddedBunExecutable(), join(runtimeDir, bunName));
 if (process.platform !== "win32") chmodSync(join(runtimeDir, bunName), 0o755);
@@ -112,9 +108,8 @@ exec "$root/runtime/bun" "$root/app/cli.js" "$@"
 writeFileSync(join(binDir, launcherName), launcher, process.platform === "win32" ? undefined : { mode: 0o755 });
 if (process.platform !== "win32") chmodSync(join(binDir, launcherName), 0o755);
 
-const playwrightPackage = join(appDir, "node_modules", "playwright-core", "package.json");
 const bundleId = createHash("sha256");
-for (const relativePath of ["app/cli.js", "app/browser-helper.cjs", "app/package.json", "app/bun.lock"]) {
+for (const relativePath of ["app/cli.js", "app/package.json"]) {
   bundleId.update(relativePath);
   bundleId.update("\0");
   bundleId.update(readFileSync(join(output, relativePath)));
@@ -129,7 +124,7 @@ writeFileSync(join(output, "manifest.json"), `${JSON.stringify({
   arch: process.arch,
   launcher: `bin/${launcherName}`,
   entrypoint: "app/cli.js",
-  playwright: JSON.parse(readFileSync(playwrightPackage, "utf8")).version,
+  mode: "pure-mcp",
 }, null, 2)}\n`);
 
 process.stdout.write(`${output}\n`);

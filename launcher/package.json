@@ -1,6 +1,6 @@
 {
   "name": "gpt-web-codex-launcher",
-  "version": "2.1.8",
+  "version": "2.2.0",
   "private": true,
   "description": "Desktop control center for ChatGPT Web planning and standalone Luna execution",
   "author": "miuuyy",
@@ -21,7 +21,6 @@
     "start": "electron ."
   },
   "dependencies": {
-    "motion": "^12.42.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

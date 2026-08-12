@@ -7,7 +7,7 @@ import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
 
 export type RuntimeMode = "browser-only" | "full";
-export type BrowserHostMode = "managed-chrome" | "launcher";
+export type BrowserHostMode = "managed-chrome" | "launcher" | "none";
 
 /**
  * ChatGPT caches a connector's public MCP contract by connector identity. The standalone Luna
@@ -163,6 +163,20 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
   };
 }
 
+export function defaultMcpConfig(): AppConfig {
+  const config = defaultConfig("full");
+  config.browserHost = "none";
+  delete config.browserHostDescriptorPath;
+  config.chromeExecutablePath = "";
+  config.storageStatePath = "";
+  config.brokerSocketPath = "";
+  config.headed = false;
+  config.solAvailable = false;
+  config.proAvailable = false;
+  config.autoApproveToolCalls = false;
+  return config;
+}
+
 export function currentRuntimeCommand(): string[] {
   const executableName = basename(process.execPath).toLowerCase();
   const bunExecutable = executableName === "bun" || executableName === "bun.exe"
@@ -307,7 +321,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (typeof parsed.releaseVersion !== "string" || !parsed.releaseVersion.trim()) throw new Error(`Missing releaseVersion in ${path}`);
   if (parsed.mode !== "browser-only" && parsed.mode !== "full") throw new Error(`Invalid runtime mode in ${path}`);
   if (parsed.host !== "127.0.0.1") throw new Error("The Responses proxy must bind to 127.0.0.1");
-  if (parsed.browserHost !== "managed-chrome" && parsed.browserHost !== "launcher") {
+  if (parsed.browserHost !== "managed-chrome" && parsed.browserHost !== "launcher" && parsed.browserHost !== "none") {
     throw new Error(`Invalid browserHost in ${path}`);
   }
   if (!Number.isInteger(parsed.port) || parsed.port! < 1 || parsed.port! > 65_535) throw new Error(`Invalid port in ${path}`);
@@ -318,9 +332,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (typeof parsed.autoApproveToolCalls !== "boolean") {
     throw new Error(`Invalid autoApproveToolCalls in ${path}`);
   }
-  const requiredStrings: Array<keyof AppConfig> = [
-    "appName", "chromeExecutablePath", "storageStatePath", "brokerSocketPath", "controlToken",
-  ];
+  const requiredStrings: Array<keyof AppConfig> = ["appName", "controlToken"];
+  if (parsed.browserHost !== "none") {
+    requiredStrings.push("chromeExecutablePath", "storageStatePath", "brokerSocketPath");
+  }
   for (const key of requiredStrings) {
     if (typeof parsed[key] !== "string" || !(parsed[key] as string).trim()) throw new Error(`Missing ${key} in ${path}`);
   }
@@ -333,13 +348,15 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && !isAbsolute(expandUserPath(parsed.browserHostDescriptorPath!))) {
     throw new Error(`Launcher browserHostDescriptorPath must be absolute in ${path}`);
   }
-  const brokerEndpoint = expandUserPath(parsed.brokerSocketPath!);
-  if (process.platform === "win32") {
-    if (!isWindowsPipeEndpoint(brokerEndpoint)) {
-      throw new Error(`Windows brokerSocketPath must be a named pipe in ${path}`);
+  if (parsed.browserHost !== "none") {
+    const brokerEndpoint = expandUserPath(parsed.brokerSocketPath!);
+    if (process.platform === "win32") {
+      if (!isWindowsPipeEndpoint(brokerEndpoint)) {
+        throw new Error(`Windows brokerSocketPath must be a named pipe in ${path}`);
+      }
+    } else if (!isAbsolute(brokerEndpoint) || isWindowsPipeEndpoint(brokerEndpoint)) {
+      throw new Error(`brokerSocketPath must be an absolute Unix socket path in ${path}`);
     }
-  } else if (!isAbsolute(brokerEndpoint) || isWindowsPipeEndpoint(brokerEndpoint)) {
-    throw new Error(`brokerSocketPath must be an absolute Unix socket path in ${path}`);
   }
   if (!/^[A-Za-z0-9_-]{40,}$/.test(parsed.controlToken!)) throw new Error(`Invalid controlToken in ${path}`);
   if (parsed.mode === "full") {
@@ -387,6 +404,9 @@ export function saveConfig(config: AppConfig): void {
 }
 
 export function providerConfig(config: AppConfig): CodexProviderConfig {
+  if (config.browserHost === "none") {
+    throw new Error("Pure MCP configuration does not expose a Codex ChatGPT Web provider");
+  }
   const model = config.solAvailable ? "gpt-5.6-sol" : "gpt-5.6-luna";
   const models = [model];
   const efforts = config.solAvailable

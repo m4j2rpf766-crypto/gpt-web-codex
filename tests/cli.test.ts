@@ -1,7 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 
 async function runCli(args: string[], env = process.env) {
   const child = Bun.spawn([process.execPath, resolve(import.meta.dir, "../src/cli.ts"), ...args], {
@@ -31,22 +29,8 @@ test("retired route and Responses commands cannot be invoked", async () => {
   }
 });
 
-test("launcher-controlled login fails before opening Chrome without live authorization", async () => {
-  const root = mkdtempSync(join(tmpdir(), "gpt-web-codex-cli-login-"));
-  const statePath = join(root, "storage-state.json");
-  try {
-    const result = await runCli([
-      "login", "--launcher-control", "--chrome", process.execPath, "--storage-state", statePath,
-    ], {
-      ...process.env,
-      CODEX_CHATGPT_WEB_HOME: join(root, "app"),
-      CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: undefined,
-      CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: undefined,
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("requires a live launcher authorization");
-    expect(existsSync(statePath)).toBe(false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+test("retired browser login command cannot be invoked", async () => {
+  const result = await runCli(["login"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("Unknown command: login");
 });

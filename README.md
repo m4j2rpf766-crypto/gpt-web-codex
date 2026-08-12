@@ -1,10 +1,10 @@
 # GPT Web Codex
 
-GPT Web Codex turns a normal ChatGPT Web conversation into the planner for local work. ChatGPT can call a standalone MCP connector; Luna executes and verifies the requested work through `codex exec --json` without changing Codex configuration or routing.
+GPT Web Codex is a pure MCP launcher. A normal ChatGPT Web conversation is the planner; Luna executes and verifies local work through `codex exec --json` without changing Codex configuration or routing.
 
 ## What it does
 
-- Opens normal, persistent ChatGPT conversations in a launcher-owned browser profile.
+- Uses ChatGPT in the user's normal browser; the launcher never embeds or automates ChatGPT.
 - Binds each stable ChatGPT conversation URL to one persistent Luna session.
 - Exposes asynchronous `codexluna_*` tools plus direct file and terminal tools over MCP.
 - Serializes Luna work inside one web session while allowing different web sessions to run independently.
@@ -34,7 +34,7 @@ OpenAI Tunnel → standalone local MCP runtime
 
 ## Development
 
-Requirements: Windows, Bun 1.3.14, a signed-in ChatGPT account, Codex CLI, and an OpenAI Tunnel for MCP.
+Requirements: Windows, Codex CLI, a ChatGPT account with custom connectors, and an OpenAI Tunnel for MCP. The packaged launcher includes Bun.
 
 ```powershell
 git clone https://github.com/miuuyy/codex-chatgpt-web.git
@@ -45,13 +45,11 @@ bun run launcher:dev
 
 From the launcher:
 
-1. Sign in to ChatGPT and run the browser smoke test.
-2. Prepare the standalone runtime.
-3. Enter the Tunnel ID and a Tunnels Read + Use API key.
-4. Create a ChatGPT connector named `WebGPT Luna Standalone`, using Tunnel transport, Authentication `None`, and Allow all actions.
-5. Verify the runtime, then open a normal ChatGPT conversation.
+1. Enter the Tunnel ID and a Tunnels Read + Use API key.
+2. Create a ChatGPT connector named `WebGPT Luna Standalone`, using Tunnel transport and Authentication `None`.
+3. Verify the runtime, then use the connector from a normal ChatGPT conversation in Chrome, Edge, Firefox, or another browser.
 
-The connector name remains stable because ChatGPT caches tool contracts. The application displays the new product name `GPT Web Codex`; legacy local data directory names may be retained internally during migration so existing login, tunnel, and Luna session state are not lost.
+The connector name remains stable because ChatGPT caches tool contracts. Legacy local data directory names may be retained internally during migration so existing tunnel and Luna session state are not lost.
 
 ## Verification
 
@@ -64,9 +62,9 @@ bun run launcher:test
 
 ## Security boundary
 
-The launcher keeps ChatGPT browser state and tunnel credentials in private local storage and redacts them from logs. `codexluna_init` returns the resolved workspace, permission mode, durable session ID, and a visible session-memory boundary before local execution. That boundary is prompt-level guidance; it cannot change the ChatGPT account's product-level Memory setting.
+The launcher keeps tunnel credentials in private local storage and redacts them from logs. It does not keep ChatGPT cookies, browser profiles, or conversation history. `codexluna_init` returns the resolved workspace, permission mode, durable session ID, and a visible session-memory boundary before local execution. That boundary is prompt-level guidance; it cannot change the ChatGPT account's product-level Memory setting.
 
-This is independent, unofficial browser automation. It can break when ChatGPT's UI changes and must not be used to evade usage limits or access controls.
+This is an independent, unofficial local MCP connector. It does not automate ChatGPT's UI and must not expose a tunnel or workspace you do not control.
 
 ## License
 

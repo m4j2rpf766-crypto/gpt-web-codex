@@ -1,5 +1,4 @@
 const fs = require("node:fs");
-const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
@@ -16,8 +15,6 @@ const {
   shell,
   Tray,
 } = require("electron");
-const { BrowserHost } = require("./browser-host.cjs");
-const { BrowserControlServer } = require("./control-server.cjs");
 const { disableLegacyAutostart } = require("./autostart.cjs");
 const {
   createLogger,
@@ -29,12 +26,7 @@ const { ensurePackagedRuntime } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
 const { createUpdateController } = require("./update.cjs");
-const {
-  createStateStore,
-  nextSessionRefreshReminderAt,
-  upsertConversationHistory,
-  validateSidebarState,
-} = require("./state.cjs");
+const { createStateStore } = require("./state.cjs");
 const {
   MIN_WINDOW_BOUNDS,
   readWindowState,
@@ -54,15 +46,10 @@ const CORE_HOME = process.env.CODEX_CHATGPT_WEB_HOME?.trim()
   ? resolveUserPath(process.env.CODEX_CHATGPT_WEB_HOME.trim())
   : path.join(os.homedir(), ".codex-chatgpt-web");
 const BROWSER_DESCRIPTOR_PATH = path.join(CORE_HOME, "runtime", "launcher-browser.json");
-const BROWSER_HELPER_PATH = app.isPackaged
-  ? path.join(process.resourcesPath, "runtime", "app", "browser-helper.cjs")
-  : path.join(SOURCE_ROOT, ".launcher-runtime", "browser-helper.cjs");
-const GITHUB_URL = "https://github.com/miuuyy/codex-chatgpt-web";
-const X_URL = "https://x.com/miu21590";
 const CONNECTORS_URL = "https://chatgpt.com/#settings/Plugins";
 const TUNNELS_URL = "https://platform.openai.com/settings/organization/tunnels";
 const KEYS_URL = "https://platform.openai.com/settings/organization/api-keys";
-const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, X_URL, CONNECTORS_URL, TUNNELS_URL, KEYS_URL]);
+const ALLOWED_EXTERNAL_URLS = new Set([CONNECTORS_URL, TUNNELS_URL, KEYS_URL]);
 const PACKAGED_RENDERER_URL = pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).href;
 const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
@@ -87,31 +74,14 @@ installProcessDiagnosticGuards({
 });
 
 let mainWindow = null;
-let browserHost = null;
 let runtimeHost = null;
-let browserControl = null;
 let runtimeSupervisor = null;
 let tray = null;
 let quitting = false;
 let shutdownInProgress = false;
 let exitCommitted = false;
-let smokePassedThisSession = false;
-let cdpPort = 0;
 let lastOperation = null;
 let updateController = null;
-
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port = address && typeof address === "object" ? address.port : 0;
-      server.close((error) => error ? reject(error) : resolve(port));
-    });
-  });
-}
 
 function send(channel, value) {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
@@ -262,7 +232,7 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
     window.on(event, () => send("launcher:window-state-changed", windowStateSnapshot(window)));
   }
   window.once("ready-to-show", () => {
-    if (!state.onboardingComplete && !Number.isFinite(windowState.bounds.x)) window.center();
+    if (!Number.isFinite(windowState.bounds.x)) window.center();
     if (windowState.maximized) window.maximize();
     if (windowState.fullscreen) window.setFullScreen(true);
     if (!startHidden) window.show();
@@ -272,7 +242,7 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
       message: error instanceof Error ? error.message : String(error),
     });
   });
-  logger.info("launcher.window_created", { platform: process.platform, cdpPort });
+  logger.info("launcher.window_created", { platform: process.platform, mode: "pure-mcp" });
   return window;
 }
 
@@ -289,95 +259,28 @@ function validateLanguage(value) {
   return value;
 }
 
-function validateBounds(value) {
-  if (!value || typeof value !== "object") throw new Error("Browser bounds are required");
-  for (const key of ["x", "y", "width", "height"]) {
-    if (!Number.isFinite(value[key])) throw new Error(`Browser bounds ${key} must be finite`);
-  }
-  return value;
-}
-
-function smokePassedForCurrentVersion(state) {
-  return state.browserSmokePassed === true && state.browserSmokeVersion === app.getVersion();
-}
-
 function registerIpc({ logger, stateStore }) {
   const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, handler);
   handle("launcher:snapshot", async () => ({
     state: stateStore.read(),
-    browser: browserHost?.snapshot() ?? null,
     connectorName: runtimeHost.browserConnectorName(),
     mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
     logs: logger.recent(),
-    urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
+    urls: { connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
     platform: process.platform,
     packaged: app.isPackaged,
     version: app.getVersion(),
-    smokePassed: smokePassedThisSession || smokePassedForCurrentVersion(stateStore.read()),
     operation: lastOperation,
     update: updateController?.getState() ?? { status: "disabled" },
   }));
 
   handle("launcher:set-language", (_event, language) => stateStore.update({ language: validateLanguage(language) }));
-  handle("launcher:open-social", async (_event, target) => {
-    const url = target === "github" ? GITHUB_URL : target === "x" ? X_URL : null;
-    if (!url) throw new Error("Unknown social target");
-    await openWebUrl(url);
-    const patch = target === "github" ? { githubOpened: true } : { xOpened: true };
-    return stateStore.update(patch);
-  });
-  handle("launcher:complete-onboarding", (_event, language) => {
-    const current = stateStore.read();
-    if (!current.githubOpened || !current.xOpened) throw new Error("Open the GitHub and X pages before continuing");
-    const next = stateStore.update({ language: validateLanguage(language), onboardingComplete: true });
-    logger.info("launcher.onboarding_completed", { language: next.language });
-    return next;
-  });
-
   handle("launcher:open-external", async (_event, url) => {
     if (!ALLOWED_EXTERNAL_URLS.has(url)) throw new Error("External URL is not allowlisted");
     await openWebUrl(url);
     return true;
   });
 
-  handle("launcher:browser-bounds", (_event, bounds) => {
-    browserHost?.setBounds(validateBounds(bounds));
-    return true;
-  });
-  handle("launcher:browser-surface-active", (_event, active) => browserHost.setSurfaceActive(active === true));
-  handle("launcher:browser-show", () => browserHost.reveal());
-  handle("launcher:browser-hide", () => { browserHost?.hide(); return browserHost?.snapshot(); });
-  handle("launcher:browser-new-conversation", () => browserHost.newConversation());
-  handle("launcher:browser-open-conversation", (_event, conversationId) => browserHost.openConversation(conversationId));
-  handle("launcher:browser-navigate", (_event, action) => browserHost.navigate(action));
-  handle("launcher:browser-zoom", (_event, action) => browserHost.zoom(action));
-  handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
-  handle("launcher:browser-tab-close", (_event, tabId) => browserHost.closeTab(tabId));
-  handle("launcher:browser-login", async () => {
-    const browser = await browserHost.openLogin();
-    if (browser.authenticated) {
-      const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-      send("launcher:state-changed", state);
-    }
-    return browser;
-  });
-  handle("launcher:browser-logout", async () => {
-    const browser = await browserHost.logout();
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-    send("launcher:state-changed", state);
-    return { browser, state };
-  });
-  handle("launcher:session-reminder-dismiss", () => {
-    const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-    send("launcher:state-changed", state);
-    return state;
-  });
-  handle("launcher:browser-smoke", async () => {
-    const result = await browserHost.smokeTest();
-    stateStore.update({ browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
-    smokePassedThisSession = true;
-    return result;
-  });
   handle("launcher:mcp-verify", async () => {
     const operationName = "mcp-verification";
     publishOperation({ name: operationName, status: "running", message: "Checking local runtime" });
@@ -393,53 +296,14 @@ function registerIpc({ logger, stateStore }) {
       publishOperation({ name: operationName, status: "failed", message });
       return report;
     }
-    try {
-      publishOperation({ name: operationName, status: "running", message: "Checking ChatGPT connector" });
-      await browserHost.verifyConnector(runtimeHost.mcpConnectorName());
-      const state = stateStore.update({ mcpSetupComplete: true });
-      send("launcher:state-changed", state);
-      publishOperation({ name: operationName, status: "completed", message: "Runtime and connector verified" });
-      return report;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const state = stateStore.update({ mcpSetupComplete: false });
-      send("launcher:state-changed", state);
-      publishOperation({ name: operationName, status: "failed", message });
-      throw error;
-    }
+    const state = stateStore.update({ mcpSetupComplete: true });
+    send("launcher:state-changed", state);
+    publishOperation({ name: operationName, status: "completed", message: "Pure MCP runtime verified" });
+    return report;
   });
 
   handle("launcher:doctor", () => runtimeHost.doctor());
-  handle("launcher:setup-core", async () => {
-    const browser = await browserHost.probeAuthentication();
-    if (!browser.authenticated) throw new Error("Sign in to ChatGPT before preparing the standalone runtime");
-    const setupState = stateStore.read();
-    if (!setupState.coreSetupComplete
-      && !(smokePassedThisSession || smokePassedForCurrentVersion(setupState))) {
-      throw new Error("Run the browser smoke test before preparing the standalone runtime");
-    }
-    const result = await runtimeHost.setupCore();
-    stateStore.update({
-      coreSetupComplete: true,
-      ...(result.mode === "full" ? {
-        mcpRuntimeInstalled: true,
-        mcpSetupComplete: false,
-        mcpGuideStep: 2,
-      } : {
-        mcpSetupComplete: false,
-        mcpRuntimeInstalled: false,
-        mcpGuideStep: 0,
-      }),
-    });
-    await browserHost.returnToIdle().catch((error) => {
-      logger.warn("browser.idle_cleanup_failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    });
-    return { ok: true, stdout: result.stdout, restartRequired: false };
-  });
   handle("launcher:setup-mcp", async (_event, input) => {
-    await browserHost.reveal();
     const result = await runtimeHost.setupMcp({
       tunnelId: typeof input?.tunnelId === "string" ? input.tunnelId.trim() : "",
       runtimeKey: typeof input?.runtimeKey === "string" ? input.runtimeKey : "",
@@ -463,7 +327,6 @@ function registerIpc({ logger, stateStore }) {
     }
     return stateStore.update({ [key]: value === true });
   });
-  handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
   handle("launcher:logs", (_event, limit) => logger.recent(limit));
   handle("launcher:open-logs", async () => {
     const error = await shell.openPath(path.dirname(logger.filePath));
@@ -499,15 +362,12 @@ async function requestQuit() {
   }
   shutdownInProgress = true;
   try {
-    const activeOperation = runtimeHost?.currentOperation() || browserHost?.currentOperation();
+    const activeOperation = runtimeHost?.currentOperation();
     if (activeOperation) {
       throw new Error(`Wait for ${activeOperation} to finish before quitting ${PRODUCT_NAME}`);
     }
     await runtimeSupervisor?.shutdown();
     quitting = true;
-    await browserHost?.persistSession();
-    browserHost?.destroy();
-    await browserControl?.close();
     exitCommitted = true;
     app.quit();
     return { ok: true };
@@ -523,10 +383,7 @@ async function requestQuit() {
 }
 
 async function start() {
-  cdpPort = await findFreePort();
   if (process.platform === "linux") app.commandLine.appendSwitch("class", "gpt-web-codex");
-  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
-  app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
 
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
@@ -552,9 +409,6 @@ async function start() {
   };
 
   const stateStore = createStateStore(path.join(app.getPath("userData"), "launcher-state.json"));
-  if (stateStore.read().sessionRefreshReminderAt === null) {
-    stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
-  }
   // Autostart belonged to the retired Codex routing bridge. Remove any legacy
   // registration once, without exposing a replacement preference.
   disableLegacyAutostart(app);
@@ -562,7 +416,7 @@ async function start() {
     filePath: path.join(app.getPath("logs"), "launcher.jsonl"),
     publish: (record) => send("launcher:log", record),
   });
-  const startHidden = process.argv.includes("--hidden") && stateStore.read().onboardingComplete;
+  const startHidden = process.argv.includes("--hidden");
   nativeTheme.themeSource = "system";
   mainWindow = createWindow({
     logger,
@@ -570,11 +424,6 @@ async function start() {
     windowStatePath: path.join(app.getPath("userData"), "window-state.json"),
     startHidden,
   });
-  browserControl = await new BrowserControlServer({
-    logger,
-    getBrowserHost: () => browserHost,
-    getPreferences: () => stateStore.read(),
-  }).start();
   runtimeSupervisor = new RuntimeSupervisor({
     app,
     logger,
@@ -596,24 +445,6 @@ async function start() {
     publishOperation,
     supervisor: runtimeSupervisor,
   });
-  browserHost = new BrowserHost({
-    window: mainWindow,
-    descriptorPath: BROWSER_DESCRIPTOR_PATH,
-    cdpPort,
-    control: browserControl.descriptor(),
-    getConnectorName: () => runtimeHost.browserConnectorName(),
-    helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
-    logger,
-    loginWithSystemBrowser: () => runtimeHost.captureSystemBrowserLogin(),
-    publishState: (state) => send("launcher:browser-state", state),
-    recordConversation: (conversation) => {
-      const current = stateStore.read();
-      const conversationHistory = upsertConversationHistory(current.conversationHistory, conversation);
-      const state = stateStore.update({ conversationHistory });
-      send("launcher:state-changed", state);
-    },
-  });
-  await browserHost.ready();
   const updaterRuntimeRoot = runtimeRootProvider();
   updateController = createUpdateController({
     currentVersion: app.getVersion(),
@@ -632,13 +463,6 @@ async function start() {
   const trayAvailable = createTray(logger);
   if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
   const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
-  if (!launcherSmokeTest) {
-    void browserHost.restoreLastConversation().catch((error) => {
-      logger.warn("browser.session_restore_failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }
   await loadRenderer(mainWindow);
   if (!launcherSmokeTest) void updateController.checkOnce();
   if (launcherSmokeTest) {
@@ -673,8 +497,6 @@ async function start() {
       packaged: app.isPackaged,
       runtimeVerified: true,
     })}\n`);
-    browserHost.destroy();
-    await browserControl.close();
     mainWindow.destroy();
     app.quit();
     return;

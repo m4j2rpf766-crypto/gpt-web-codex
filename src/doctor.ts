@@ -1,11 +1,9 @@
 import { existsSync, statSync } from "node:fs";
 import type { AppConfig } from "./config";
 import { getConfigPath, loadConfig } from "./config";
-import { browserLoginStateExists, loginVerificationMarkerPath } from "./browser-login";
 import { getServiceStatus } from "./service";
 import { tunnelStatus } from "./tunnel";
 import { getTunnelServiceStatus } from "./tunnel-service";
-import { inspectLauncherBrowserHost, readLauncherBrowserHostDescriptor } from "./launcher-browser-host";
 
 export type CheckStatus = "ok" | "warning" | "error";
 
@@ -38,39 +36,9 @@ export async function runDoctor(): Promise<DoctorReport> {
     return { ok: false, checks };
   }
 
-  if (config.browserHost === "launcher") {
-    try {
-      const descriptor = readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
-      await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
-      checks.push({
-        id: "browser-host",
-        status: "ok",
-        message: `Embedded launcher browser is authenticated and reachable (pid ${descriptor.pid})`,
-      });
-    } catch (error) {
-      checks.push({
-        id: "browser-host",
-        status: "error",
-        message: "Embedded launcher browser is unavailable",
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    }
-  } else {
-    if (!existsSync(config.chromeExecutablePath)) {
-      checks.push({ id: "chrome", status: "error", message: `Chrome executable is missing: ${config.chromeExecutablePath}` });
-    } else {
-      checks.push({ id: "chrome", status: "ok", message: `Chrome executable found: ${config.chromeExecutablePath}` });
-    }
-    if (!browserLoginStateExists(config)) {
-      checks.push({ id: "login", status: "error", message: "ChatGPT login state is missing or unverified; run `gpt-web-codex login`" });
-    } else if (!secureFile(config.storageStatePath)) {
-      checks.push({ id: "login", status: "error", message: `ChatGPT login state is readable by other users: ${config.storageStatePath}` });
-    } else if (!secureFile(loginVerificationMarkerPath(config.storageStatePath))) {
-      checks.push({ id: "login", status: "error", message: "ChatGPT login verification marker is readable by other users" });
-    } else {
-      checks.push({ id: "login", status: "ok", message: "ChatGPT login state has authenticated browser evidence" });
-    }
-  }
+  checks.push(config.browserHost === "none"
+    ? { id: "browser", status: "ok", message: "Pure MCP mode is active; no embedded browser or ChatGPT login state is used" }
+    : { id: "browser", status: "warning", message: "Legacy browser configuration remains; rerun pure MCP setup to migrate it" });
 
   checks.push({
     id: "standalone-mcp",
@@ -79,7 +47,7 @@ export async function runDoctor(): Promise<DoctorReport> {
   });
 
   const service = getServiceStatus();
-  if (config.browserHost === "launcher") {
+  if (config.browserHost === "launcher" || config.browserHost === "none") {
     checks.push(service.installed || service.loaded
       ? {
           id: "service",
@@ -110,7 +78,7 @@ export async function runDoctor(): Promise<DoctorReport> {
       checks.push({ id: "tunnel-key", status: "ok", message: "Tunnel runtime key is stored privately" });
     }
     const tunnelService = getTunnelServiceStatus();
-    if (config.browserHost === "launcher") {
+    if (config.browserHost === "launcher" || config.browserHost === "none") {
       checks.push(tunnelService.installed || tunnelService.loaded
         ? {
             id: "tunnel-service",
@@ -118,7 +86,7 @@ export async function runDoctor(): Promise<DoctorReport> {
             message: "A legacy OS tunnel service still exists; rerun launcher MCP setup to migrate ownership",
             detail: JSON.stringify(tunnelService),
           }
-        : { id: "tunnel-service", status: "ok", message: "Launcher owns the tunnel runtime" });
+        : { id: "tunnel-service", status: "ok", message: "Pure MCP launcher owns the tunnel runtime" });
     } else {
       checks.push(tunnelService.installed && tunnelService.loaded && tunnelService.running
         ? { id: "tunnel-service", status: "ok", message: "macOS tunnel service is installed, loaded, and running" }

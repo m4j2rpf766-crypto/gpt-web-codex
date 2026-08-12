@@ -1,6 +1,6 @@
 {
   "name": "gpt-web-codex",
-  "version": "2.1.8",
+  "version": "2.2.0",
   "private": true,
   "description": "A standalone ChatGPT Web planner with Luna execution and direct local MCP tools.",
   "repository": {
@@ -46,17 +46,17 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "chromium-bidi": "12.1.0",
     "fflate": "^0.8.2",
-    "playwright-core": "^1.62.0",
-    "tiktoken": "1.0.22",
-    "turndown": "7.2.0",
-    "turndown-plugin-gfm": "1.0.2",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",
     "@types/turndown": "5.0.5",
+    "chromium-bidi": "12.1.0",
+    "playwright-core": "^1.62.0",
+    "tiktoken": "1.0.22",
+    "turndown": "7.2.0",
+    "turndown-plugin-gfm": "1.0.2",
     "typescript": "5.9.3"
   },
   "engines": {
@@ -72,8 +72,7 @@
     "codex",
     "chatgpt",
     "luna",
-    "mcp",
-    "playwright"
+    "mcp"
   ],
   "license": "MIT"
 }

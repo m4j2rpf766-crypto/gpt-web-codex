@@ -14,7 +14,6 @@ function runtimeFixture(root, version = "0.2.0", bundleId = "a".repeat(64)) {
   fs.writeFileSync(executable, "bun");
   if (process.platform !== "win32") fs.chmodSync(executable, 0o755);
   fs.writeFileSync(path.join(source, "app", "cli.js"), "cli");
-  fs.writeFileSync(path.join(source, "app", "browser-helper.cjs"), "helper");
   fs.writeFileSync(path.join(source, "manifest.json"), `${JSON.stringify({
     schemaVersion: 1,
     appVersion: version,

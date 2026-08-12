@@ -185,9 +185,13 @@ function validateConfig(config, descriptorPath, platform = process.platform) {
   if (typeof config.releaseVersion !== "string" || !config.releaseVersion.trim()) {
     throw new Error("Runtime configuration has no release version");
   }
-  if (config.browserHost !== "launcher") throw new Error("Runtime configuration is not owned by the launcher");
-  if (!absolutePath(config.browserHostDescriptorPath || "", platform)
-    || pathIdentity(config.browserHostDescriptorPath || "", platform) !== pathIdentity(descriptorPath, platform)) {
+  if (config.browserHost !== "launcher" && config.browserHost !== "none") {
+    throw new Error("Runtime configuration is not owned by the launcher");
+  }
+  if (config.browserHost === "launcher" && (
+    !absolutePath(config.browserHostDescriptorPath || "", platform)
+    || pathIdentity(config.browserHostDescriptorPath || "", platform) !== pathIdentity(descriptorPath, platform)
+  )) {
     throw new Error("Runtime configuration points to a different launcher browser host");
   }
   if (config.host !== "127.0.0.1"
@@ -205,17 +209,19 @@ function validateConfig(config, descriptorPath, platform = process.platform) {
   if (typeof config.appName !== "string" || !config.appName.trim() || config.appName.length > 80) {
     throw new Error("Runtime configuration has an invalid connector name");
   }
-  for (const key of ["chromeExecutablePath", "storageStatePath", "brokerSocketPath"]) {
-    if (typeof config[key] !== "string" || !config[key].trim()) {
-      throw new Error(`Runtime configuration is missing ${key}`);
+  if (config.browserHost !== "none") {
+    for (const key of ["chromeExecutablePath", "storageStatePath", "brokerSocketPath"]) {
+      if (typeof config[key] !== "string" || !config[key].trim()) {
+        throw new Error(`Runtime configuration is missing ${key}`);
+      }
     }
-  }
-  if (platform === "win32") {
-    if (!windowsPipeEndpoint(config.brokerSocketPath)) {
-      throw new Error("Runtime configuration has an invalid Windows broker pipe");
+    if (platform === "win32") {
+      if (!windowsPipeEndpoint(config.brokerSocketPath)) {
+        throw new Error("Runtime configuration has an invalid Windows broker pipe");
+      }
+    } else if (!absolutePath(config.brokerSocketPath, platform) || windowsPipeEndpoint(config.brokerSocketPath)) {
+      throw new Error("Runtime configuration has an invalid Unix broker socket");
     }
-  } else if (!absolutePath(config.brokerSocketPath, platform) || windowsPipeEndpoint(config.brokerSocketPath)) {
-    throw new Error("Runtime configuration has an invalid Unix broker socket");
   }
   for (const key of ["headed", "solAvailable", "proAvailable", "autoApproveToolCalls"]) {
     if (typeof config[key] !== "boolean") {
@@ -411,10 +417,7 @@ class RuntimeSupervisor {
     const child = spawn(invocation.executable, invocation.args, {
       cwd: invocation.cwd,
       detached: DETACH_OWNED_CHILD,
-      env: {
-        ...process.env,
-        CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
-      },
+      env: { ...process.env },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });

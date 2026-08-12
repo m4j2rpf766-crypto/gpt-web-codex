@@ -1,56 +1,14 @@
 export type Language = "en" | "zh-CN";
-export type Surface = "browser" | "setup" | "mcp" | "activity" | "settings";
+export type Surface = "dashboard" | "mcp" | "activity" | "settings";
 
 export interface LauncherState {
   version: 1;
   language: Language | null;
-  onboardingComplete: boolean;
-  githubOpened: boolean;
-  xOpened: boolean;
   keepRunningOnClose: boolean;
-  sidebarOpen: boolean;
-  sidebarWidth: number;
-  browserSmokePassed?: boolean;
-  browserSmokeVersion?: string | null;
   coreSetupComplete?: boolean;
   mcpSetupComplete?: boolean;
   mcpRuntimeInstalled?: boolean;
   mcpGuideStep: number;
-  sessionRefreshReminderAt: string | null;
-  conversationHistory: ConversationHistoryEntry[];
-}
-
-export interface ConversationHistoryEntry {
-  id: string;
-  title: string;
-  visitedAt: string;
-}
-
-export interface BrowserState {
-  status: "idle" | "loading" | "signed-out" | "ready" | "testing" | "running" | "error";
-  message: string;
-  url: string;
-  title: string;
-  authenticated: boolean;
-  visible: boolean;
-  surfaceActive: boolean;
-  loading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  zoomFactor: number;
-  activeTabId: string;
-  maxTabs: number;
-  tabs: BrowserTabState[];
-}
-
-export interface BrowserTabState {
-  id: string;
-  traceId: string | null;
-  title: string;
-  status: "idle" | "loading" | "signed-out" | "ready" | "testing" | "running" | "error" | "aborted";
-  loading: boolean;
-  active: boolean;
-  closable: boolean;
 }
 
 export interface LogRecord {
@@ -86,13 +44,10 @@ export type UpdateState =
 
 export interface LauncherSnapshot {
   state: LauncherState;
-  browser: BrowserState | null;
   connectorName: string;
   mcpCredentialsConfigured: boolean;
   logs: LogRecord[];
   urls: {
-    github: string;
-    x: string;
     connectors: string;
     tunnels: string;
     keys: string;
@@ -100,7 +55,6 @@ export interface LauncherSnapshot {
   platform: string;
   packaged: boolean;
   version: string;
-  smokePassed: boolean;
   operation: OperationState | null;
   update: UpdateState;
 }
@@ -108,26 +62,9 @@ export interface LauncherSnapshot {
 export interface LauncherApi {
   snapshot(): Promise<LauncherSnapshot>;
   setLanguage(language: Language): Promise<LauncherState>;
-  openSocial(target: "github" | "x"): Promise<LauncherState>;
-  completeOnboarding(language: Language): Promise<LauncherState>;
   openExternal(url: string): Promise<boolean>;
-  setBrowserBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<boolean>;
-  setBrowserSurfaceActive(active: boolean): Promise<BrowserState>;
-  showBrowser(): Promise<BrowserState>;
-  hideBrowser(): Promise<BrowserState>;
-  newConversation(): Promise<BrowserState>;
-  openConversation(conversationId: string): Promise<BrowserState>;
-  navigateBrowser(action: "back" | "forward" | "reload"): Promise<BrowserState>;
-  zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
-  selectBrowserTab(tabId: string): Promise<BrowserState>;
-  closeBrowserTab(tabId: string): Promise<BrowserState>;
-  openLogin(): Promise<BrowserState>;
-  logoutChatGpt(): Promise<{ browser: BrowserState; state: LauncherState }>;
-  dismissSessionReminder(): Promise<LauncherState>;
-  smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
   verifyMcp(): Promise<DoctorReport>;
   doctor(): Promise<DoctorReport>;
-  setupCore(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
   setupMcp(input: {
     tunnelId?: string;
     runtimeKey?: string;
@@ -135,7 +72,6 @@ export interface LauncherApi {
   }): Promise<{ ok: boolean; stdout: string }>;
   setMcpStep(step: number): Promise<LauncherState>;
   setPreference(key: "keepRunningOnClose", value: boolean): Promise<LauncherState>;
-  setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   logs(limit?: number): Promise<LogRecord[]>;
   openLogs(): Promise<string>;
   installUpdate(): Promise<boolean>;
@@ -143,7 +79,6 @@ export interface LauncherApi {
   windowControl(action: "close" | "minimize" | "zoom"): void;
   onWindowStateChanged(listener: (state: { fullScreen: boolean; maximized: boolean }) => void): () => void;
   onStateChanged(listener: (state: LauncherState) => void): () => void;
-  onBrowserState(listener: (state: BrowserState) => void): () => void;
   onOperation(listener: (state: OperationState) => void): () => void;
   onLog(listener: (record: LogRecord) => void): () => void;
   onUpdateState(listener: (state: UpdateState) => void): () => void;

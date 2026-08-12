@@ -1,27 +1,23 @@
-const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
+const path = require("node:path");
 const { randomBytes } = require("node:crypto");
 const { spawn } = require("node:child_process");
-const { writePrivateFileAtomic } = require("./atomic-file.cjs");
-const {
-  connectorNameForSetup,
-  CURRENT_CONNECTOR_NAME,
-  isLegacyConnectorName,
-  requireCurrentRuntimeConnectorName,
-  validateConnectorName,
-} = require("./connector-identity.cjs");
-const { embeddedRuntimeInvocation, runtimeInvocation } = require("./runtime-command.cjs");
+const { CURRENT_CONNECTOR_NAME, connectorNameForSetup } = require("./connector-identity.cjs");
+const { runtimeInvocation } = require("./runtime-command.cjs");
 const { redactText } = require("./logging.cjs");
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tree.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
-const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
-const CORE_SETUP_TIMEOUT_MS = 5 * 60_000;
-const MCP_SETUP_TIMEOUT_MS = 10 * 60_000;
-const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
-const MAX_LOGIN_STATE_FILE_BYTES = 16 * 1024 * 1024;
-function collect(stream, chunks, onLine, onError) {
+const SETUP_TIMEOUT_MS = 10 * 60_000;
+
+function resolveUserPath(value) {
+  if (value === "~") return os.homedir();
+  if (value.startsWith("~/") || value.startsWith("~\\")) return path.resolve(os.homedir(), value.slice(2));
+  return path.resolve(value);
+}
+
+function collect(stream, chunks, onLine) {
   let buffered = "";
   let bytes = 0;
   stream.on("data", (chunk) => {
@@ -35,219 +31,39 @@ function collect(stream, chunks, onLine, onError) {
       buffered = buffered.slice(newline + 1);
       if (line) onLine(line);
     }
-    if (buffered.length > MAX_RUNTIME_LOG_LINE_CHARS) {
-      onLine(`${buffered.slice(0, MAX_RUNTIME_LOG_LINE_CHARS)}…[truncated]`);
-      buffered = "";
-    }
   });
-  stream.on("end", () => {
-    const line = buffered.trim();
-    if (line) onLine(line);
-  });
-  stream.on("error", (error) => onError?.(error));
-}
-
-function resolveUserPath(value) {
-  if (value === "~") return os.homedir();
-  if (value.startsWith("~/") || value.startsWith("~\\")) {
-    return path.resolve(os.homedir(), value.slice(2));
-  }
-  return path.resolve(value);
-}
-
-function browserLoginCandidates(platform = process.platform, env = process.env) {
-  if (platform === "darwin") {
-    return [
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    ];
-  }
-  if (platform === "win32") {
-    const roots = [env.PROGRAMFILES, env["PROGRAMFILES(X86)"], env.LOCALAPPDATA].filter(Boolean);
-    return roots.flatMap((root) => [
-      path.win32.join(root, "Google", "Chrome", "Application", "chrome.exe"),
-      path.win32.join(root, "Chromium", "Application", "chrome.exe"),
-    ]);
-  }
-  return [
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/opt/google/chrome/google-chrome",
-  ];
-}
-
-function executablePathIsAbsolute(candidate, platform = process.platform) {
-  return platform === "win32" ? path.win32.isAbsolute(candidate) : path.posix.isAbsolute(candidate);
-}
-
-function usableBrowserExecutable(candidate, platform = process.platform) {
-  if (typeof candidate !== "string" || !candidate || !executablePathIsAbsolute(candidate, platform)) return false;
-  try {
-    if (!fs.statSync(candidate).isFile()) return false;
-    if (platform !== "win32") fs.accessSync(candidate, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function resolveBrowserLoginExecutable({
-  configuredPath,
-  platform = process.platform,
-  candidates = browserLoginCandidates(platform),
-  isUsable = (candidate) => usableBrowserExecutable(candidate, platform),
-} = {}) {
-  if (configuredPath !== undefined && configuredPath !== null) {
-    if (typeof configuredPath !== "string" || !configuredPath.trim() || !executablePathIsAbsolute(configuredPath, platform)) {
-      throw new Error(`Configured Chrome/Chromium executable path is invalid: ${String(configuredPath)}`);
-    }
-    if (!isUsable(configuredPath)) {
-      throw new Error(
-        `Configured Chrome/Chromium executable is unavailable: ${configuredPath}. Set chromeExecutablePath to an absolute`
-        + " Google Chrome or Chromium executable path and retry; the launcher will not substitute another browser.",
-      );
-    }
-    return configuredPath;
-  }
-  for (const candidate of [...new Set(candidates)]) {
-    if (isUsable(candidate)) return candidate;
-  }
-  throw new Error(
-    `No supported system Chrome/Chromium executable was found. Install Google Chrome or Chromium, or configure`
-    + ` chromeExecutablePath explicitly. Checked: ${candidates.join(", ")}`,
-  );
-}
-
-function captureRegularFile(filePath) {
-  let stat;
-  try {
-    stat = fs.lstatSync(filePath);
-  } catch (error) {
-    if (error?.code === "ENOENT") return { path: filePath, exists: false };
-    throw error;
-  }
-  if (!stat.isFile()) {
-    throw new Error(`Setup checkpoint path is not a regular file: ${filePath}`);
-  }
-  if (stat.size > MAX_CHECKPOINT_FILE_BYTES) {
-    throw new Error(`Setup checkpoint file exceeds ${MAX_CHECKPOINT_FILE_BYTES} bytes: ${filePath}`);
-  }
-  return {
-    path: filePath,
-    exists: true,
-    data: fs.readFileSync(filePath),
-    mode: stat.mode & 0o777,
-  };
-}
-
-function restoreRegularFile(snapshot, platform = process.platform) {
-  if (!snapshot.exists) {
-    fs.rmSync(snapshot.path, { force: true });
-    return;
-  }
-  writePrivateFileAtomic(snapshot.path, snapshot.data);
-  if (platform !== "win32") fs.chmodSync(snapshot.path, snapshot.mode);
-}
-
-function regularFileChanged(snapshot, platform = process.platform) {
-  let stat;
-  try {
-    stat = fs.lstatSync(snapshot.path);
-  } catch (error) {
-    if (error?.code === "ENOENT") return snapshot.exists;
-    throw error;
-  }
-  if (!snapshot.exists || !stat.isFile()) return true;
-  if (platform !== "win32" && (stat.mode & 0o777) !== snapshot.mode) return true;
-  if (stat.size > MAX_CHECKPOINT_FILE_BYTES) return true;
-  return !fs.readFileSync(snapshot.path).equals(snapshot.data);
 }
 
 class RuntimeHost {
-  constructor({
-    app,
-    logger,
-    sourceRoot,
-    installedRuntimeRoot,
-    runtimeRootProvider,
-    browserDescriptorPath,
-    codexHome,
-    launchAgentsDir,
-    platform = process.platform,
-    publishOperation,
-    supervisor,
-  }) {
+  constructor({ app, logger, sourceRoot, installedRuntimeRoot, runtimeRootProvider, publishOperation, supervisor }) {
     this.app = app;
     this.logger = logger;
     this.sourceRoot = sourceRoot;
     this.installedRuntimeRoot = installedRuntimeRoot;
     this.runtimeRootProvider = runtimeRootProvider;
-    this.browserDescriptorPath = browserDescriptorPath;
-    this.platform = platform;
-    this.codexHome = codexHome
-      ? resolveUserPath(codexHome)
-      : process.env.CODEX_HOME?.trim()
-        ? resolveUserPath(process.env.CODEX_HOME.trim())
-        : path.join(os.homedir(), ".codex");
-    this.launchAgentsDir = launchAgentsDir
-      ? resolveUserPath(launchAgentsDir)
-      : path.join(os.homedir(), "Library", "LaunchAgents");
     this.publishOperation = publishOperation;
     this.supervisor = supervisor;
     this.active = null;
     this.activeChild = null;
-    this.lifecycleOperation = null;
     this.cleanupEphemeralSecrets();
-    this.browserLoginCleanupError = null;
+  }
+
+  cleanupEphemeralSecrets() {
+    const directory = path.join(this.app.getPath("userData"), "secrets");
     try {
-      this.cleanupBrowserLoginTransfers();
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isFile() && /^runtime-key-[a-f0-9]{32}\.tmp$/.test(entry.name)) {
+          fs.rmSync(path.join(directory, entry.name), { force: true });
+        }
+      }
     } catch (error) {
-      this.browserLoginCleanupError = error;
-      this.logger.warn("runtime.browser_login_cleanup_failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
+      if (error?.code !== "ENOENT") this.logger.warn("runtime.secret_cleanup_failed", { message: String(error) });
     }
   }
 
   currentOperation() {
-    const stuckChild = this.activeChild
-      && this.activeChild.exitCode === null
-      && this.activeChild.signalCode === null;
-    return this.lifecycleOperation || this.active || (stuckChild ? "previous runtime process shutdown" : null);
-  }
-
-  cleanupEphemeralSecrets() {
-    const secretsDir = path.join(this.app.getPath("userData"), "secrets");
-    try {
-      for (const entry of fs.readdirSync(secretsDir, { withFileTypes: true })) {
-        if (/^runtime-key-(?:\d+|[a-f0-9]{32})\.tmp$/.test(entry.name)) {
-          fs.rmSync(path.join(secretsDir, entry.name), { force: true });
-        }
-      }
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        this.logger.warn("runtime.secret_cleanup_failed", {
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
-
-  cleanupBrowserLoginTransfers() {
-    const parent = path.join(this.app.getPath("userData"), "browser-login");
-    let entries;
-    try {
-      entries = fs.readdirSync(parent, { withFileTypes: true });
-    } catch (error) {
-      if (error?.code === "ENOENT") return;
-      throw error;
-    }
-    for (const entry of entries) {
-      if (!/^transfer-[A-Za-z0-9]+$/.test(entry.name)) continue;
-      fs.rmSync(path.join(parent, entry.name), { recursive: true, force: true });
-    }
+    const liveChild = this.activeChild && this.activeChild.exitCode === null && this.activeChild.signalCode === null;
+    return this.active || (liveChild ? "runtime process shutdown" : null);
   }
 
   command(args) {
@@ -260,390 +76,81 @@ class RuntimeHost {
     });
   }
 
-  launcherControlEnvironment() {
-    let descriptor;
-    try {
-      descriptor = JSON.parse(fs.readFileSync(this.browserDescriptorPath, "utf8"));
-    } catch (error) {
-      throw new Error(
-        `Launcher browser ownership descriptor is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    const token = descriptor?.control?.token;
-    if (descriptor?.pid !== process.pid || typeof token !== "string" || !/^[A-Za-z0-9_-]{40,}$/.test(token)) {
-      throw new Error("Launcher browser ownership descriptor does not belong to this launcher process");
-    }
-    return { CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: token };
-  }
-
-  resolveBrowserLoginExecutable() {
-    const setupConfig = this.supervisor.readSetupConfig
-      ? this.supervisor.readSetupConfig()
-      : this.supervisor.readConfig();
-    return resolveBrowserLoginExecutable({
-      configuredPath: setupConfig?.chromeExecutablePath,
-      platform: this.platform,
-    });
-  }
-
-  async captureSystemBrowserLogin() {
-    try {
-      this.cleanupBrowserLoginTransfers();
-      this.browserLoginCleanupError = null;
-    } catch (error) {
-      this.browserLoginCleanupError = error;
-      throw new Error(
-        `Refusing to start system-browser login because stale private transfer state could not be removed:`
-        + ` ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    const executable = this.resolveBrowserLoginExecutable();
-    const parent = path.join(this.app.getPath("userData"), "browser-login");
-    fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(parent, 0o700); } catch {}
-    const transferRoot = fs.mkdtempSync(path.join(parent, "transfer-"));
-    try { fs.chmodSync(transferRoot, 0o700); } catch {}
-    const storageStatePath = path.join(transferRoot, "storage-state.json");
-    const cleanup = async () => fs.rmSync(transferRoot, { recursive: true, force: true });
-    try {
-      await this.run(
-        "browser-login",
-        [
-          "login",
-          "--launcher-control",
-          "--chrome",
-          executable,
-          "--storage-state",
-          storageStatePath,
-        ],
-        {
-          env: this.launcherControlEnvironment(),
-          message: "Sign in to ChatGPT in the dedicated system Chrome/Chromium window; transfer continues automatically",
-          successMessage: "Authenticated system-browser ChatGPT session captured",
-        },
-      );
-      const stateStat = fs.lstatSync(storageStatePath);
-      if (!stateStat.isFile() || stateStat.size <= 0 || stateStat.size > MAX_LOGIN_STATE_FILE_BYTES) {
-        throw new Error("System-browser login returned an invalid storage-state file");
-      }
-      const markerPath = `${storageStatePath}.verified.json`;
-      const markerStat = fs.lstatSync(markerPath);
-      if (!markerStat.isFile() || markerStat.size <= 0 || markerStat.size > 64 * 1024) {
-        throw new Error("System-browser login returned an invalid verification marker");
-      }
-      const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
-      if (
-        marker?.version !== 2
-        || marker?.authenticated !== true
-        || marker?.source !== "authenticated-system-browser"
-        || typeof marker?.capturedAt !== "string"
-      ) {
-        throw new Error("System-browser login did not return authenticated capture evidence");
-      }
-      const storageState = JSON.parse(fs.readFileSync(storageStatePath, "utf8"));
-      return { storageState, cleanup };
-    } catch (error) {
-      await cleanup();
-      throw error;
-    }
-  }
-
   runtimeConfigSnapshot() {
-    const setupConfig = this.supervisor.readSetupConfig
-      ? this.supervisor.readSetupConfig()
-      : this.supervisor.readConfig();
-    if (!setupConfig) {
-      return {
-        configured: false,
-        owner: "none",
-        mode: "browser-only",
-        serialized: null,
-      };
-    }
-    const launcherOwned = setupConfig.browserHost === "launcher";
-    const config = launcherOwned ? this.supervisor.readConfig() : setupConfig;
-    return {
-      configured: true,
-      owner: launcherOwned ? "launcher" : "external",
-      mode: config.mode === "full" ? "full" : "browser-only",
-      serialized: JSON.stringify(config),
-      config: structuredClone(config),
-    };
+    let config;
+    try { config = this.supervisor.readSetupConfig(); }
+    catch { return { configured: false, mode: "full", config: null }; }
+    if (!config) return { configured: false, mode: "full", config: null };
+    return { configured: true, mode: config.mode, config };
   }
 
   mcpCredentialsConfigured() {
     const config = this.runtimeConfigSnapshot().config;
     const tunnel = config?.mode === "full" ? config.tunnel : null;
-    return Boolean(
-      tunnel
+    return Boolean(tunnel
       && /^tunnel_[a-f0-9]{32}$/.test(tunnel.tunnelId)
       && typeof tunnel.runtimeKeyFile === "string"
       && path.isAbsolute(tunnel.runtimeKeyFile)
-      && fs.existsSync(tunnel.runtimeKeyFile),
-    );
+      && fs.existsSync(tunnel.runtimeKeyFile));
   }
 
-  captureSetupCheckpoint(snapshot) {
-    if (typeof this.supervisor.configPath !== "string" || !path.isAbsolute(this.supervisor.configPath)) {
-      throw new Error("Launcher runtime supervisor has no absolute configuration path for setup rollback");
-    }
-    const coreHome = this.supervisor.coreHome
-      || path.dirname(this.supervisor.configPath);
-    const paths = new Set([
-      this.supervisor.configPath,
-      path.join(coreHome, "codex", "integration-journal.json"),
-      path.join(this.codexHome, "config.toml"),
-      path.join(this.codexHome, "models_cache.json"),
-      path.join(coreHome, "secrets", "tunnel-runtime.key"),
-      path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web.yaml"),
-    ]);
-    if (snapshot.owner === "external" && this.platform === "darwin") {
-      paths.add(path.join(this.launchAgentsDir, "io.github.codex-chatgpt-web.daemon.plist"));
-      paths.add(path.join(this.launchAgentsDir, "io.github.codex-chatgpt-web.tunnel.plist"));
-    }
-    const tunnel = snapshot.config?.tunnel;
-    if (tunnel && typeof tunnel === "object") {
-      if (typeof tunnel.runtimeKeyFile === "string" && tunnel.runtimeKeyFile) {
-        paths.add(tunnel.runtimeKeyFile);
-      }
-      if (typeof tunnel.profileDir === "string"
-        && tunnel.profileDir
-        && typeof tunnel.profileName === "string"
-        && tunnel.profileName) {
-        paths.add(path.join(tunnel.profileDir, `${tunnel.profileName}.yaml`));
-      }
-    }
-    return [...paths].map(captureRegularFile);
+  browserConnectorName() {
+    const config = this.runtimeConfigSnapshot().config;
+    return connectorNameForSetup(config?.appName || CURRENT_CONNECTOR_NAME);
   }
 
-  setupCheckpointChanged(checkpoint) {
-    return checkpoint ? checkpoint.some(snapshot => regularFileChanged(snapshot, this.platform)) : false;
-  }
+  mcpConnectorName() { return this.browserConnectorName(); }
 
-  restoreSetupCheckpoint(checkpoint) {
-    if (!checkpoint) return;
-    const failures = [];
-    for (const snapshot of [...checkpoint].reverse()) {
-      try {
-        restoreRegularFile(snapshot, this.platform);
-      } catch (error) {
-        failures.push(`${snapshot.path}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    if (failures.length > 0) {
-      throw new Error(`Setup checkpoint restoration failed: ${failures.join("; ")}`);
-    }
-  }
-
-  async restorePreviousRuntime(snapshot, operationName, { repairExternal = false } = {}) {
-    const current = this.runtimeConfigSnapshot();
-    if (current.owner !== snapshot.owner || current.serialized !== snapshot.serialized) {
-      throw new Error(
-        "Runtime configuration changed before the operation failed; refusing to describe the current runtime as the previous installation",
-      );
-    }
-    if (snapshot.owner === "external") {
-      if (repairExternal) {
-        if (this.platform !== "darwin") {
-          throw new Error("Terminal-managed runtime repair is supported only on macOS");
-        }
-        await this.run(operationName, ["service", "install"], {
-          embedded: true,
-          message: "Restoring the previous terminal-managed daemon",
-          successMessage: "Previous terminal-managed daemon restored",
-          timeoutMs: 75_000,
-        });
-        if (snapshot.mode === "full") {
-          await this.run(operationName, ["tunnel", "start"], {
-            embedded: true,
-            message: "Restoring the previous terminal-managed tunnel",
-            successMessage: "Previous terminal-managed tunnel restored",
-            timeoutMs: 75_000,
-          });
-        }
-      }
-      await this.run(operationName, ["doctor", "--json"], {
-        message: "Verifying the previous terminal-managed runtime",
-        successMessage: "Previous terminal-managed runtime is still healthy",
-        timeoutMs: 75_000,
-      });
-      return;
-    }
-    const runtime = await this.supervisor.startIfConfigured();
-    const expected = snapshot.configured ? "ready" : "not-configured";
-    if (runtime.status !== expected) {
-      throw new Error(
-        `Previous runtime recovery returned ${runtime.status}; expected ${expected}${runtime.detail ? `: ${runtime.detail}` : ""}`,
-      );
-    }
-  }
-
-  async rollbackFirstSetup(checkpoint) {
-    const changed = this.setupCheckpointChanged(checkpoint);
-    let stopError;
-    try {
-      await this.supervisor.stopForSetup();
-    } catch (error) {
-      stopError = error;
-    }
-    let restoreError;
-    try {
-      this.restoreSetupCheckpoint(checkpoint);
-    } catch (error) {
-      restoreError = error;
-    }
-    this.supervisor.clearState();
-    if (stopError || restoreError) {
-      const failures = [
-        stopError ? `stopping the incomplete runtime failed: ${stopError instanceof Error ? stopError.message : String(stopError)}` : null,
-        restoreError ? (restoreError instanceof Error ? restoreError.message : String(restoreError)) : null,
-      ].filter(Boolean);
-      throw new Error(failures.join("; "));
-    }
-    return changed;
-  }
-
-  async run(name, args, options = {}) {
-    if (this.active) throw new Error(`Another launcher operation is active: ${this.active}`);
-    if (this.activeChild
-      && this.activeChild.exitCode === null
-      && this.activeChild.signalCode === null) {
-      throw new Error("A previous launcher operation process is still running");
-    }
-    this.activeChild = null;
-    if (this.lifecycleOperation && this.lifecycleOperation !== name) {
-      throw new Error(`Another launcher operation is active: ${this.lifecycleOperation}`);
-    }
+  async run(name, args, { message = name, successMessage = "Completed", timeoutMs = 75_000 } = {}) {
+    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     this.active = name;
-    this.publishOperation?.({ name, status: "running", message: options.message || name });
-    this.logger.info("runtime.operation_started", { name, args: args.map((arg) => /key|token/i.test(arg) ? "[redacted]" : arg) });
+    this.publishOperation?.({ name, status: "running", message });
+    this.logger.info("runtime.operation_started", { name, args: args.map((part) => /key|token/i.test(part) ? "[redacted]" : part) });
     try {
-      const invocation = options.embedded
-        ? embeddedRuntimeInvocation({ app: this.app, sourceRoot: this.sourceRoot, args })
-        : this.command(args);
+      const invocation = this.command(args);
       const result = await new Promise((resolve, reject) => {
         const child = spawn(invocation.executable, invocation.args, {
           cwd: invocation.cwd,
           detached: DETACH_OWNED_CHILD,
-          env: {
-            ...process.env,
-            CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
-            ...(options.env || {}),
-          },
+          env: { ...process.env },
           stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true,
         });
         this.activeChild = child;
         const stdout = [];
         const stderr = [];
-        const pipeErrors = [];
-        const recordPipeError = (stream) => (error) => {
-          pipeErrors.push(`${name} ${stream} pipe failed: ${error instanceof Error ? error.message : String(error)}`);
-        };
         collect(child.stdout, stdout, (line) => {
           this.logger.info("runtime.stdout", { operation: name, line });
           this.publishOperation?.({ name, status: "running", message: redactText(line) });
-        }, recordPipeError("stdout"));
+        });
         collect(child.stderr, stderr, (line) => {
           this.logger.warn("runtime.stderr", { operation: name, line });
           this.publishOperation?.({ name, status: "running", message: redactText(line) });
-        }, recordPipeError("stderr"));
-        let settled = false;
-        let timedOut = null;
-        let terminationTimeout = null;
-        let forceTimeout = null;
-        const clearTimers = () => {
-          if (timeout) clearTimeout(timeout);
-          if (terminationTimeout) clearTimeout(terminationTimeout);
-          if (forceTimeout) clearTimeout(forceTimeout);
-        };
-        const timeout = options.timeoutMs
-          ? setTimeout(() => {
-              if (settled) return;
-              timedOut = new Error(`${name} timed out after ${options.timeoutMs}ms`);
-              try {
-                terminateOwnedProcessTree(child);
-              } catch (error) {
-                settled = true;
-                clearTimers();
-                reject(new Error(
-                  `${timedOut.message}; child process tree termination failed: ${error instanceof Error ? error.message : String(error)}`,
-                ));
-                return;
-              }
-              terminationTimeout = setTimeout(() => {
-                if (settled) return;
-                try {
-                  terminateOwnedProcessTree(child, "SIGKILL");
-                } catch (error) {
-                  settled = true;
-                  clearTimers();
-                  reject(new Error(
-                    `${timedOut.message}; forced child process tree termination failed: ${error instanceof Error ? error.message : String(error)}`,
-                  ));
-                  return;
-                }
-                forceTimeout = setTimeout(() => {
-                  if (settled) return;
-                  settled = true;
-                  clearTimers();
-                  reject(new Error(`${timedOut.message}; the child process did not exit after forced termination`));
-                }, 2_000);
-              }, 5_000);
-            }, options.timeoutMs)
-          : null;
-        child.once("error", (error) => {
-          const childStillRunning = Number.isInteger(child.pid)
-            && child.exitCode === null
-            && child.signalCode === null;
-          if (this.activeChild === child && !childStillRunning) this.activeChild = null;
-          if (settled) return;
-          settled = true;
-          clearTimers();
-          reject(timedOut
-            ? new Error(`${timedOut.message}; termination failed: ${error.message}`)
-            : error);
         });
-        child.once("exit", (code, signal) => {
-          if (this.activeChild === child) this.activeChild = null;
-          if (settled) return;
-          settled = true;
-          clearTimers();
-          if (timedOut) {
-            try {
-              terminateOwnedProcessTree(child, "SIGKILL");
-              reject(timedOut);
-            } catch (error) {
-              reject(new Error(
-                `${timedOut.message}; final process-group cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-              ));
-            }
-            return;
-          }
-          if (pipeErrors.length > 0) {
-            reject(new Error(pipeErrors.join("; ")));
-            return;
-          }
-          resolve({
-            code: code ?? 1,
-            signal,
-            stdout: Buffer.concat(stdout).toString("utf8"),
-            stderr: Buffer.concat(stderr).toString("utf8"),
-          });
+        let timedOut = false;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          try { terminateOwnedProcessTree(child); } catch {}
+        }, timeoutMs);
+        child.once("error", reject);
+        child.once("exit", (code) => {
+          clearTimeout(timer);
+          this.activeChild = null;
+          if (timedOut) return reject(new Error(`${name} timed out after ${timeoutMs}ms`));
+          const out = Buffer.concat(stdout).toString("utf8");
+          const err = Buffer.concat(stderr).toString("utf8");
+          if (code !== 0) return reject(new Error(err.trim() || out.trim() || `exit ${code}`));
+          resolve({ stdout: out, stderr: err });
         });
       });
-      if (result.code !== 0) {
-        const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.code}`;
-        throw new Error(detail);
-      }
       this.logger.info("runtime.operation_completed", { name });
-      this.publishOperation?.({ name, status: "completed", message: options.successMessage || "Completed" });
+      this.publishOperation?.({ name, status: "completed", message: successMessage });
       return result;
     } catch (error) {
-      const message = redactText(error instanceof Error ? error.message : String(error));
-      this.logger.error("runtime.operation_failed", { name, message });
-      this.publishOperation?.({ name, status: "failed", message });
-      throw new Error(message);
+      const messageText = redactText(error instanceof Error ? error.message : String(error));
+      this.logger.error("runtime.operation_failed", { name, message: messageText });
+      this.publishOperation?.({ name, status: "failed", message: messageText });
+      throw new Error(messageText);
     } finally {
       this.active = null;
     }
@@ -651,206 +158,55 @@ class RuntimeHost {
 
   async doctor() {
     try {
-      const result = await this.run("doctor", ["doctor", "--json"], {
-        message: "Checking runtime",
-        timeoutMs: 75_000,
-      });
+      const result = await this.run("doctor", ["doctor", "--json"], { message: "Checking pure MCP runtime" });
       return JSON.parse(result.stdout);
     } catch (error) {
-      return {
-        ok: false,
-        checks: [{ id: "runtime", status: "error", message: error instanceof Error ? error.message : String(error) }],
-      };
+      return { ok: false, checks: [{ id: "runtime", status: "error", message: error instanceof Error ? error.message : String(error) }] };
     }
-  }
-
-  mcpConnectorName() {
-    const current = this.runtimeConfigSnapshot();
-    if (!current.configured || current.mode !== "full") {
-      throw new Error("The native MCP runtime is not configured");
-    }
-    return requireCurrentRuntimeConnectorName(current.config?.appName);
-  }
-
-  browserConnectorName() {
-    const current = this.runtimeConfigSnapshot();
-    if (!current.configured || current.mode !== "full") return CURRENT_CONNECTOR_NAME;
-    return connectorNameForSetup(current.config?.appName);
-  }
-
-  async setupCore() {
-    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
-    const existing = this.runtimeConfigSnapshot();
-    const mode = existing.mode;
-    const args = [
-      "setup",
-      mode === "full" ? "--full" : "--browser-only",
-      "--browser-host-descriptor",
-      this.browserDescriptorPath,
-      "--refresh-account-capabilities",
-      "--acknowledge-unofficial",
-      "--replace-legacy-runtime",
-    ];
-    if (!existing.configured) args.push("--chrome", this.resolveBrowserLoginExecutable());
-    if (mode === "full") args.push("--app-name", this.browserConnectorName());
-    const result = await this.runSetup("core-setup", args, {
-      message: "Preparing the standalone browser and Luna runtime",
-      successMessage: "Standalone runtime prepared",
-      timeoutMs: CORE_SETUP_TIMEOUT_MS,
-    });
-    return { ...result, mode };
   }
 
   async upgradeManagedRuntime() {
-    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const existing = this.runtimeConfigSnapshot();
+    if (!existing.configured || existing.mode !== "full") return { updated: false, needsSetup: true };
     const currentVersion = this.app.getVersion();
-    const connectorMigrationRequired = existing.mode === "full"
-      && isLegacyConnectorName(validateConnectorName(existing.config?.appName));
-    if (existing.owner !== "launcher"
-      || (existing.config?.releaseVersion === currentVersion && !connectorMigrationRequired)) {
-      return { updated: false };
-    }
-    const args = [
-      "setup",
-      existing.mode === "full" ? "--full" : "--browser-only",
-      "--browser-host-descriptor",
-      this.browserDescriptorPath,
-      "--acknowledge-unofficial",
-      "--replace-legacy-runtime",
-    ];
-    if (existing.mode === "full") {
-      args.push("--app-name", connectorNameForSetup(existing.config?.appName));
-    }
-    const result = await this.runSetup("runtime-upgrade", args, {
-      message: `Upgrading launcher runtime from ${existing.config.releaseVersion} to ${currentVersion}`,
-      successMessage: `Launcher runtime upgraded to ${currentVersion}`,
-      timeoutMs: existing.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
-    });
+    if (existing.config.releaseVersion === currentVersion && existing.config.browserHost === "none") return { updated: false };
+    await this.setupMcp({});
     return {
       updated: true,
-      mode: existing.mode,
+      mode: "full",
       fromVersion: existing.config.releaseVersion,
       toVersion: currentVersion,
-      connectorMigrated: connectorMigrationRequired,
-      stdout: result.stdout,
+      connectorMigrated: existing.config.browserHost !== "none",
     };
   }
 
-  setupMcp({ tunnelId = "", runtimeKey = "", replace = false } = {}) {
-    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
-    const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured();
-    if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
-      throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
+  async setupMcp({ tunnelId = "", runtimeKey = "", replace = false } = {}) {
+    const reuse = replace !== true && this.mcpCredentialsConfigured();
+    if (!reuse && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
+    if (!reuse && (typeof runtimeKey !== "string" || runtimeKey.trim().length < 20)) throw new Error("A Tunnels Read + Use runtime key is required");
+    const args = ["setup", "--full", "--mcp-only", "--app-name", this.browserConnectorName(), "--acknowledge-unofficial", "--replace-legacy-runtime"];
+    let temporaryKey = null;
+    if (!reuse) {
+      const directory = path.join(this.app.getPath("userData"), "secrets");
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      temporaryKey = path.join(directory, `runtime-key-${randomBytes(16).toString("hex")}.tmp`);
+      fs.writeFileSync(temporaryKey, runtimeKey.trim(), { flag: "wx", mode: 0o600 });
+      args.push("--tunnel-id", tunnelId, "--runtime-key-file", temporaryKey);
     }
-    if (!reuseSavedCredentials && (typeof runtimeKey !== "string" || runtimeKey.trim().length < 20)) {
-      throw new Error("A Tunnels Read + Use runtime key is required");
-    }
-    const args = [
-      "setup",
-      "--full",
-      "--browser-host-descriptor",
-      this.browserDescriptorPath,
-      "--app-name",
-      this.browserConnectorName(),
-    ];
-    if (reuseSavedCredentials) {
-      args.push("--acknowledge-unofficial", "--replace-legacy-runtime");
-      return this.runSetup("mcp-setup", args, {
-        message: "Reconnecting the Luna MCP harness with saved tunnel credentials",
-        successMessage: "Local MCP tools are ready",
-        timeoutMs: MCP_SETUP_TIMEOUT_MS,
-      });
-    }
-    const secretsDir = path.join(this.app.getPath("userData"), "secrets");
-    fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(secretsDir, 0o700); } catch {}
-    const keyPath = path.join(secretsDir, `runtime-key-${randomBytes(16).toString("hex")}.tmp`);
-    fs.writeFileSync(keyPath, runtimeKey.trim(), { flag: "wx", mode: 0o600 });
-    args.push(
-      "--tunnel-id",
-      tunnelId,
-      "--runtime-key-file",
-      keyPath,
-      "--acknowledge-unofficial",
-      "--replace-legacy-runtime",
-    );
-    return this.runSetup("mcp-setup", args, {
-      message: "Connecting the Luna MCP harness",
-      successMessage: "Local MCP tools are ready",
-      timeoutMs: MCP_SETUP_TIMEOUT_MS,
-    }).finally(() => fs.rmSync(keyPath, { force: true }));
-  }
-
-  async runSetup(name, args, options) {
-    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
-    const previousRuntime = this.runtimeConfigSnapshot();
-    const checkpoint = this.captureSetupCheckpoint(previousRuntime);
-    this.lifecycleOperation = name;
-    let setupCommandStarted = false;
+    await this.supervisor.stopForSetup();
     try {
-      if (previousRuntime.owner === "external") this.supervisor.prepareExternalMigration();
-      else await this.supervisor.stopForSetup();
-      setupCommandStarted = true;
-      const result = await this.run(name, args, options);
+      const result = await this.run("mcp-setup", args, {
+        message: reuse ? "Migrating saved tunnel to pure MCP mode" : "Connecting pure MCP tunnel",
+        successMessage: "Pure MCP tools are ready",
+        timeoutMs: SETUP_TIMEOUT_MS,
+      });
       const runtime = await this.supervisor.startIfConfigured();
-      if (runtime.status !== "ready") {
-        throw new Error(`Setup completed, but the launcher-owned runtime is ${runtime.status}: ${runtime.detail || "not ready"}`);
-      }
+      if (runtime.status !== "ready") throw new Error(`Pure MCP runtime is ${runtime.status}: ${runtime.detail || "not ready"}`);
       return result;
-    } catch (error) {
-      const primary = error instanceof Error ? error.message : String(error);
-      const failures = [];
-      let rolledBack = false;
-      let checkpointChanged = false;
-      if (!previousRuntime.configured && setupCommandStarted) {
-        try {
-          rolledBack = await this.rollbackFirstSetup(checkpoint);
-        } catch (caught) {
-          failures.push(
-            `first-time setup rollback failed: ${caught instanceof Error ? caught.message : String(caught)}`,
-          );
-        }
-      }
-      if (previousRuntime.configured && checkpoint) {
-        try {
-          checkpointChanged = this.setupCheckpointChanged(checkpoint);
-        } catch (caught) {
-          checkpointChanged = true;
-          failures.push(
-            `checking the setup checkpoint failed: ${caught instanceof Error ? caught.message : String(caught)}`,
-          );
-        }
-        try {
-          this.restoreSetupCheckpoint(checkpoint);
-        } catch (caught) {
-          failures.push(caught instanceof Error ? caught.message : String(caught));
-        }
-      }
-      let recoveryError;
-      try {
-        await this.restorePreviousRuntime(previousRuntime, name, {
-          repairExternal: previousRuntime.owner === "external" && checkpointChanged,
-        });
-      } catch (caught) {
-        recoveryError = caught;
-      }
-      if (recoveryError) {
-        failures.push(
-          `restoring the previous launcher runtime failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
-        );
-      }
-      const message = [
-        primary,
-        ...(rolledBack ? ["incomplete first-time setup was rolled back"] : []),
-        ...failures,
-      ].join("; ");
-      this.publishOperation?.({ name, status: "failed", message });
-      throw new Error(message);
     } finally {
-      this.lifecycleOperation = null;
+      if (temporaryKey) fs.rmSync(temporaryKey, { force: true });
     }
   }
 }
 
-module.exports = { CURRENT_CONNECTOR_NAME, resolveBrowserLoginExecutable, RuntimeHost };
+module.exports = { RuntimeHost, resolveUserPath };

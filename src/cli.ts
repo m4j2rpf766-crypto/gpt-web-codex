@@ -1,13 +1,9 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
-import { timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
-import { isAbsolute } from "node:path";
 import { stdin, stdout } from "node:process";
-import { checkBrowserEngine, loginToChatGpt } from "./browser-login";
-import { CHATGPT_CONNECTOR_NAME, defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
-import { inspectLauncherBrowserHost, readLauncherBrowserHostDescriptor } from "./launcher-browser-host";
+import { CHATGPT_CONNECTOR_NAME, getConfigPath, loadConfigForSetup } from "./config";
 import { formatDoctorReport, runDoctor } from "./doctor";
 import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { runCommand } from "./process";
@@ -20,28 +16,18 @@ const HELP = `gpt-web-codex ${VERSION}
 ChatGPT Web planning with standalone Luna execution and local MCP tools.
 
 Usage:
-  gpt-web-codex setup --browser-only [options]
-  gpt-web-codex setup --full --tunnel-id ID --runtime-key-file PATH [options]
-  gpt-web-codex login
+  gpt-web-codex setup --full --mcp-only --tunnel-id ID --runtime-key-file PATH [options]
   gpt-web-codex doctor [--json]
-  gpt-web-codex browser check
   gpt-web-codex mcp [--state-path PATH]
   gpt-web-codex open <tunnels|runtime-keys|connectors>
 
 Setup options:
-  --browser-only               Prepare the launcher-owned ChatGPT browser
-  --full                       Add the standalone Luna MCP runtime and tunnel
-  --chrome PATH                Google Chrome/Chromium executable used for account login
-  --browser-host-descriptor PATH
-                               Use the embedded launcher browser described by this owner-only file
-  --refresh-account-capabilities
-                               Re-read the authenticated account's available Web models
+  --full                       Configure the standalone Luna MCP runtime and tunnel
+  --mcp-only                   Do not configure or launch any ChatGPT browser automation
   --app-name NAME              ChatGPT connector name (default: ${CHATGPT_CONNECTOR_NAME})
   --tunnel-id ID               Existing OpenAI tunnel id (full mode)
   --runtime-key-file PATH      File containing a Tunnels Read+Use runtime key
-  --login                      Refresh the stored ChatGPT login even if one exists
-  --auto-approve-tool-calls    Opt in to per-call browser clicks on "Allow once" prompts
-  --acknowledge-unofficial     Accept the one-time unofficial-browser-automation notice
+  --acknowledge-unofficial     Accept the one-time unofficial-connector notice
 
 Global:
   --home PATH                  Override the local runtime data directory
@@ -99,80 +85,27 @@ function assertNoArgs(args: string[]): void {
   if (args.length > 0) throw new Error(`Unknown arguments: ${args.join(" ")}`);
 }
 
-function authorizeLauncherControl(operation: string): void {
-  const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR?.trim();
-  const supplied = process.env.CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN?.trim();
-  delete process.env.CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN;
-  if (!descriptorPath || !supplied) {
-    throw new Error(`Launcher-controlled ${operation} requires a live launcher authorization`);
-  }
-  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-  const expectedBytes = Buffer.from(descriptor.control.token);
-  const suppliedBytes = Buffer.from(supplied);
-  if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) {
-    throw new Error(`Launcher-controlled ${operation} authorization is invalid`);
-  }
-}
-
-async function loginCommand(args: string[]): Promise<void> {
-  const launcherControl = takeFlag(args, "--launcher-control");
-  if (!launcherControl) {
-    assertNoArgs(args);
-    const config = loadConfig();
-    if (config.browserHost === "launcher") {
-      throw new Error("ChatGPT login is owned by the launcher; open GPT Web Codex and use its Sign in step");
-    }
-    const result = await loginToChatGpt(config);
-    stdout.write(`ChatGPT login stored at ${result.storageStatePath}\n`);
-    return;
-  }
-
-  const chromeExecutablePath = takeOption(args, "--chrome");
-  const storageStatePath = takeOption(args, "--storage-state");
-  assertNoArgs(args);
-  authorizeLauncherControl("login");
-  if (!chromeExecutablePath || !isAbsolute(chromeExecutablePath)) {
-    throw new Error("Launcher-controlled login requires --chrome with an absolute executable path");
-  }
-  if (!storageStatePath || !isAbsolute(storageStatePath)) {
-    throw new Error("Launcher-controlled login requires --storage-state with an absolute path");
-  }
-  await loginToChatGpt({
-    ...defaultConfig(),
-    chromeExecutablePath,
-    storageStatePath,
-  });
-  stdout.write("Launcher-controlled ChatGPT login captured for private-profile verification.\n");
-}
-
 async function setupCommand(args: string[]): Promise<void> {
-  const browserOnly = takeFlag(args, "--browser-only");
   const full = takeFlag(args, "--full");
-  if (browserOnly === full) throw new Error("Choose exactly one setup mode: --browser-only or --full");
+  const pureMcp = takeFlag(args, "--mcp-only");
+  if (!full || !pureMcp) throw new Error("Pure MCP setup requires both --full and --mcp-only");
   let acknowledged = takeFlag(args, "--acknowledge-unofficial");
   const options: SetupOptions = {
-    mode: full ? "full" : "browser-only",
+    mode: "full",
+    pureMcp: true,
   };
   const appName = takeOption(args, "--app-name");
   const tunnelId = takeOption(args, "--tunnel-id");
   const runtimeKeyFile = takeOption(args, "--runtime-key-file");
-  const chrome = takeOption(args, "--chrome");
-  const browserHostDescriptorPath = takeOption(args, "--browser-host-descriptor");
-  if (chrome) options.chromeExecutablePath = chrome;
-  if (browserHostDescriptorPath) options.browserHostDescriptorPath = browserHostDescriptorPath;
-  options.refreshAccountCapabilities = takeFlag(args, "--refresh-account-capabilities");
   if (appName) options.appName = appName;
   if (tunnelId) options.tunnelId = tunnelId;
   if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
-  options.forceLogin = takeFlag(args, "--login");
-  options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
   options.replaceLegacyRuntime = takeFlag(args, "--replace-legacy-runtime");
   assertNoArgs(args);
 
   if (!acknowledged) {
     stdout.write(
-      "This is independent, unofficial software. It automates your ChatGPT web session, can break when the UI changes, "
-      + "and must not be used to evade usage limits or access controls.\n",
+      "This is independent, unofficial software. It exposes local MCP tools to a ChatGPT connector and must be used only with tunnels and workspaces you control.\n",
     );
     acknowledged = await confirm("Continue and store this acknowledgement?");
   }
@@ -186,7 +119,7 @@ async function setupCommand(args: string[]): Promise<void> {
     && !reusableCredentials.runtimeKey
     && !existsSync(managedRuntimeKeyPath());
 
-  if (full && (needsTunnelId || needsRuntimeKey) && stdin.isTTY) {
+  if (needsTunnelId || needsRuntimeKey) {
     stdout.write("Full mode needs an OpenAI tunnel and a runtime key with Tunnels Read + Use.\n");
     stdout.write("Tunnels: https://platform.openai.com/settings/organization/tunnels\n");
     stdout.write("Runtime keys: https://platform.openai.com/settings/organization/api-keys\n");
@@ -247,21 +180,8 @@ async function main(): Promise<void> {
   const command = args.shift() ?? "help";
   if (command === "help") stdout.write(HELP);
   else if (command === "setup") await setupCommand(args);
-  else if (command === "login") await loginCommand(args);
   else if (command === "doctor" || command === "status") await doctorCommand(args);
-  else if (command === "browser") {
-    const action = args.shift();
-    assertNoArgs(args);
-    if (action !== "check") throw new Error("Browser command must be: browser check");
-    const config = loadConfig();
-    if (config.browserHost === "launcher") {
-      await inspectLauncherBrowserHost(config.browserHostDescriptorPath!);
-      stdout.write("Playwright can reach the authenticated ChatGPT surface embedded in the launcher.\n");
-    } else {
-      await checkBrowserEngine(config);
-      stdout.write("Playwright can launch the configured Chrome executable.\n");
-    }
-  } else if (command === "mcp") await runChatGptMcpMain(args);
+  else if (command === "mcp") await runChatGptMcpMain(args);
   else if (command === "open") await openCommand(args);
   else throw new Error(`Unknown command: ${command}\n\n${HELP}`);
 }
