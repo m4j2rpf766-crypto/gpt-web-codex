@@ -1,4 +1,4 @@
-export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview-v2.html";
+export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview-v6.html";
 export const IMAGE_PREVIEW_MIME_TYPE = "text/html;profile=mcp-app";
 
 export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
@@ -25,7 +25,7 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
     <div class="stage"><img id="preview" alt="本地图片预览"></div>
     <div class="meta"><span id="name" class="name"></span><span id="detail" class="detail"></span></div>
   </main>
-  <div id="status" class="status">正在准备图片预览…</div>
+  <div id="status" class="status">Preparing image preview...</div>
   <script>
     (() => {
       const card = document.getElementById("card");
@@ -35,19 +35,27 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
       const status = document.getElementById("status");
       const formatBytes = (bytes) => bytes < 1024 ? bytes + " B" : bytes < 1048576 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1048576).toFixed(1) + " MB";
       const findImage = (value) => {
-        const metadata = value?.toolResponseMetadata || value?._meta || {};
-        const output = value?.toolOutput || value?.structuredContent || value || {};
-        const nativeImage = Array.isArray(value?.content)
-          ? value.content.find((item) => item?.type === "image" && item?.data && item?.mimeType)
-          : undefined;
-        return metadata.webgpt_image_preview
-          || output.webgpt_image_preview
-          || (nativeImage ? {
-            name: output.name || "image",
-            mime_type: nativeImage.mimeType,
-            bytes: Math.floor(nativeImage.data.length * 0.75),
-            data_url: "data:" + nativeImage.mimeType + ";base64," + nativeImage.data,
-          } : undefined);
+        const seen = new Set();
+        const queue = [value];
+        for (let visited = 0; queue.length && visited < 200; visited += 1) {
+          let item = queue.shift();
+          if (typeof item === "string" && item.trim().startsWith("{")) {
+            try { item = JSON.parse(item); } catch {}
+          }
+          if (!item || typeof item !== "object" || seen.has(item)) continue;
+          seen.add(item);
+          if (item.webgpt_image_preview?.data_url) return item.webgpt_image_preview;
+          if (item.type === "image" && item.data && item.mimeType) {
+            return {
+              name: "image",
+              mime_type: item.mimeType,
+              bytes: Math.floor(item.data.length * 0.75),
+              data_url: "data:" + item.mimeType + ";base64," + item.data,
+            };
+          }
+          if (Array.isArray(item)) queue.push(...item);
+          else queue.push(...Object.values(item));
+        }
       };
       const render = (globals) => {
         const api = window.openai || {};
@@ -57,7 +65,7 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
         });
         if (!image?.data_url) return false;
         preview.src = image.data_url;
-        preview.alt = "本地图片预览：" + (image.name || "image");
+        preview.alt = "Local image preview: " + (image.name || "image");
         name.textContent = image.name || "image";
         detail.textContent = [image.mime_type, formatBytes(image.bytes || 0)].filter(Boolean).join(" · ");
         status.hidden = true;
@@ -70,6 +78,14 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
         if (event.source !== window.parent) return;
         const message = event.data;
         if (message?.jsonrpc !== "2.0") return;
+        if (message.id === 1 && message.result) {
+          window.parent.postMessage({
+            jsonrpc: "2.0",
+            method: "ui/notifications/initialized",
+          }, "*");
+          render();
+          return;
+        }
         if (message.method === "ui/notifications/tool-result") render(message.params);
       }, { passive: true });
       window.parent.postMessage({

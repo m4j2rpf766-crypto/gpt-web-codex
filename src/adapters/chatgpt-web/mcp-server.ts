@@ -29,8 +29,24 @@ function fileReadResult(value: ReturnType<DirectToolService["read"]>) {
     ],
     structuredContent: metadata,
     _meta: {
-      ui: { resourceUri: IMAGE_PREVIEW_RESOURCE_URI },
-      "openai/outputTemplate": IMAGE_PREVIEW_RESOURCE_URI,
+      webgpt_image_preview: {
+        name,
+        mime_type: value.mimeType,
+        bytes: value.bytes,
+        data_url: `data:${value.mimeType};base64,${value.data}`,
+      },
+    },
+  };
+}
+
+function fileImagePreviewResult(value: ReturnType<DirectToolService["read"]>) {
+  if (!("data" in value)) return result({ ...value }, true);
+  const metadata = { path: value.path, mime_type: value.mimeType, bytes: value.bytes };
+  const name = value.path.replaceAll("\\", "/").split("/").at(-1) || "image";
+  return {
+    content: [{ type: "text" as const, text: `Displaying local image preview: ${name}` }],
+    structuredContent: metadata,
+    _meta: {
       webgpt_image_preview: {
         name,
         mime_type: value.mimeType,
@@ -44,7 +60,7 @@ function fileReadResult(value: ReturnType<DirectToolService["read"]>) {
 export async function runChatGptMcpServer(options: { statePath?: string } = {}): Promise<void> {
   const jobs = new LunaJobManager(new LunaStateStore(options.statePath));
   const direct = new DirectToolService();
-  const server = new McpServer({ name: "webgpt-luna", version: "0.1.0" });
+  const server = new McpServer({ name: "webgpt-luna", version: "0.2.1" });
   const shutdown = () => {
     jobs.shutdown();
     direct.shutdown();
@@ -135,16 +151,39 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
 
   server.registerTool("file_read", {
     title: "Read a local text file or image",
-    description: "Read text directly or transfer a PNG, JPEG, GIF, or WebP image as a native MCP image content block so ChatGPT can inspect it. The resolved path and disclosed workspace are checked unless full access is selected. Images default to a 10 MB transfer limit and never appear as base64 text.",
+    description: "Read text directly or transfer a PNG, JPEG, GIF, or WebP image as a native MCP image content block so ChatGPT can inspect it. To visibly render an image in the conversation, call file_image_preview with the same path and workspace after inspection. The resolved path and disclosed workspace are checked unless full access is selected. Images default to a 10 MB transfer limit and never appear as base64 text.",
     inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_chars: z.number().int().min(1).max(1_000_000).default(200_000), max_image_bytes: z.number().int().min(1).max(20_000_000).default(10_000_000) },
+    outputSchema: {
+      path: z.string(),
+      mime_type: z.string().optional(),
+      bytes: z.number().int().nonnegative().optional(),
+      text: z.string().optional(),
+      truncated: z.boolean().optional(),
+    },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: {
-      ui: { resourceUri: IMAGE_PREVIEW_RESOURCE_URI },
+      ui: { resourceUri: IMAGE_PREVIEW_RESOURCE_URI, visibility: ["model", "app"] },
+      "ui/resourceUri": IMAGE_PREVIEW_RESOURCE_URI,
       "openai/outputTemplate": IMAGE_PREVIEW_RESOURCE_URI,
       "openai/toolInvocation/invoking": "正在读取本地文件",
       "openai/toolInvocation/invoked": "本地文件读取完成",
     },
   }, async input => fileReadResult(direct.read(input.path, input.workspace_path, input.permission_mode, input.max_chars, input.max_image_bytes)));
+
+  server.registerTool("file_image_preview", {
+    title: "Display a local image inline",
+    description: "Render a PNG, JPEG, GIF, or WebP file as a visible inline image card in the ChatGPT conversation. Use this presentation tool whenever the user asks to see or preview a local image. The resolved path and disclosed workspace are checked unless full access is selected.",
+    inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_image_bytes: z.number().int().min(1).max(20_000_000).default(10_000_000) },
+    outputSchema: { path: z.string(), mime_type: z.string(), bytes: z.number().int().nonnegative() },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: {
+      ui: { resourceUri: IMAGE_PREVIEW_RESOURCE_URI, visibility: ["model", "app"] },
+      "ui/resourceUri": IMAGE_PREVIEW_RESOURCE_URI,
+      "openai/outputTemplate": IMAGE_PREVIEW_RESOURCE_URI,
+      "openai/toolInvocation/invoking": "正在准备图片预览",
+      "openai/toolInvocation/invoked": "图片预览已就绪",
+    },
+  }, async input => fileImagePreviewResult(direct.read(input.path, input.workspace_path, input.permission_mode, 1, input.max_image_bytes)));
 
   server.registerTool("file_list", {
     title: "List a local directory",

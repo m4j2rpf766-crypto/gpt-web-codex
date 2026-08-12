@@ -279,7 +279,7 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
     const names = (await client.listTools()).tools.map(tool => tool.name).sort();
     expect(names).toEqual([
       "codexluna_cancel", "codexluna_session", "codexluna_start", "codexluna_status",
-      "file_list", "file_read", "file_search", "file_write", "terminal_cancel", "terminal_start", "terminal_status",
+      "file_image_preview", "file_list", "file_read", "file_search", "file_write", "terminal_cancel", "terminal_start", "terminal_status",
     ]);
     const binding = await client.callTool({
       name: "codexluna_session",
@@ -309,7 +309,9 @@ test("standalone MCP file_read transmits an image content block without base64 d
     await client.connect(transport);
     const tools = await client.listTools();
     expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
-    expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.ui).toEqual({ resourceUri: IMAGE_PREVIEW_RESOURCE_URI });
+    expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.["ui/resourceUri"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
+    expect(tools.tools.find(tool => tool.name === "file_image_preview")?._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
+    expect(tools.tools.find(tool => tool.name === "file_image_preview")?._meta?.ui).toEqual({ resourceUri: IMAGE_PREVIEW_RESOURCE_URI, visibility: ["model", "app"] });
     const resources = await client.listResources();
     expect(resources.resources.some(resource => resource.uri === IMAGE_PREVIEW_RESOURCE_URI)).toBe(true);
     const preview = await client.readResource({ uri: IMAGE_PREVIEW_RESOURCE_URI });
@@ -331,8 +333,19 @@ test("standalone MCP file_read transmits an image content block without base64 d
       bytes: image.length,
       data_url: `data:image/png;base64,${image.toString("base64")}`,
     });
-    expect(output._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
-    expect(output._meta?.ui).toEqual({ resourceUri: IMAGE_PREVIEW_RESOURCE_URI });
+    const rendered = await client.callTool({
+      name: "file_image_preview",
+      arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
+    });
+    expect(rendered.structuredContent).toEqual({
+      path: join(root, "pixel.png"), mime_type: "image/png", bytes: image.length,
+    });
+    expect(rendered._meta?.webgpt_image_preview).toEqual({
+      name: "pixel.png",
+      mime_type: "image/png",
+      bytes: image.length,
+      data_url: `data:image/png;base64,${image.toString("base64")}`,
+    });
   } finally {
     await client.close();
     rmSync(root, { recursive: true, force: true });
