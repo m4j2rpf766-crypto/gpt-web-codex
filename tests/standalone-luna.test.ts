@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCodexInvocation } from "../src/standalone/codex-command";
 import { DirectToolService, resolveScopedPath } from "../src/standalone/direct-tools";
-import { IMAGE_PREVIEW_RESOURCE_URI } from "../src/standalone/image-preview";
+import { IMAGE_PREVIEW_MIME_TYPE, IMAGE_PREVIEW_RESOURCE_URI } from "../src/standalone/image-preview";
 import { LunaJobManager } from "../src/standalone/luna-jobs";
 import { LunaStateStore } from "../src/standalone/state-store";
 import type { LunaJob } from "../src/standalone/types";
@@ -309,10 +309,11 @@ test("standalone MCP file_read transmits an image content block without base64 d
     await client.connect(transport);
     const tools = await client.listTools();
     expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
+    expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.ui).toEqual({ resourceUri: IMAGE_PREVIEW_RESOURCE_URI });
     const resources = await client.listResources();
     expect(resources.resources.some(resource => resource.uri === IMAGE_PREVIEW_RESOURCE_URI)).toBe(true);
     const preview = await client.readResource({ uri: IMAGE_PREVIEW_RESOURCE_URI });
-    expect(preview.contents[0]?.mimeType).toBe("text/html+skybridge");
+    expect(preview.contents[0]?.mimeType).toBe(IMAGE_PREVIEW_MIME_TYPE);
     const previewContent = preview.contents[0];
     expect(previewContent && "text" in previewContent ? previewContent.text : "").toContain("webgpt_image_preview");
     const output = await client.callTool({
@@ -331,6 +332,7 @@ test("standalone MCP file_read transmits an image content block without base64 d
       data_url: `data:image/png;base64,${image.toString("base64")}`,
     });
     expect(output._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
+    expect(output._meta?.ui).toEqual({ resourceUri: IMAGE_PREVIEW_RESOURCE_URI });
   } finally {
     await client.close();
     rmSync(root, { recursive: true, force: true });

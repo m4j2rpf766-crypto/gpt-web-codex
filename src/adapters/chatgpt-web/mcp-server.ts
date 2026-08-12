@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import { DirectToolService } from "../../standalone/direct-tools";
-import { IMAGE_PREVIEW_HTML, IMAGE_PREVIEW_RESOURCE_URI } from "../../standalone/image-preview";
+import { IMAGE_PREVIEW_HTML, IMAGE_PREVIEW_MIME_TYPE, IMAGE_PREVIEW_RESOURCE_URI } from "../../standalone/image-preview";
 import { LunaJobManager } from "../../standalone/luna-jobs";
 import { LunaStateStore } from "../../standalone/state-store";
 
@@ -29,6 +29,7 @@ function fileReadResult(value: ReturnType<DirectToolService["read"]>) {
     ],
     structuredContent: metadata,
     _meta: {
+      ui: { resourceUri: IMAGE_PREVIEW_RESOURCE_URI },
       "openai/outputTemplate": IMAGE_PREVIEW_RESOURCE_URI,
       webgpt_image_preview: {
         name,
@@ -55,8 +56,9 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
   server.registerResource("webgpt-image-preview", IMAGE_PREVIEW_RESOURCE_URI, {
     title: "WebGPT local image preview",
     description: "Inline preview card for a local image returned by file_read.",
-    mimeType: "text/html+skybridge",
+    mimeType: IMAGE_PREVIEW_MIME_TYPE,
     _meta: {
+      ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
       "openai/widgetDescription": "Displays the local image returned by file_read directly in the conversation.",
       "openai/widgetPrefersBorder": true,
       "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
@@ -64,9 +66,10 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
   }, async () => ({
     contents: [{
       uri: IMAGE_PREVIEW_RESOURCE_URI,
-      mimeType: "text/html+skybridge",
+      mimeType: IMAGE_PREVIEW_MIME_TYPE,
       text: IMAGE_PREVIEW_HTML,
       _meta: {
+        ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
         "openai/widgetDescription": "Displays the local image returned by file_read directly in the conversation.",
         "openai/widgetPrefersBorder": true,
         "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
@@ -136,6 +139,7 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_chars: z.number().int().min(1).max(1_000_000).default(200_000), max_image_bytes: z.number().int().min(1).max(20_000_000).default(10_000_000) },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: {
+      ui: { resourceUri: IMAGE_PREVIEW_RESOURCE_URI },
       "openai/outputTemplate": IMAGE_PREVIEW_RESOURCE_URI,
       "openai/toolInvocation/invoking": "正在读取本地文件",
       "openai/toolInvocation/invoked": "本地文件读取完成",

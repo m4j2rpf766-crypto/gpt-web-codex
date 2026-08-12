@@ -1,4 +1,5 @@
-export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview.html";
+export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview-v2.html";
+export const IMAGE_PREVIEW_MIME_TYPE = "text/html;profile=mcp-app";
 
 export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
 <html lang="zh-CN">
@@ -33,11 +34,27 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
       const detail = document.getElementById("detail");
       const status = document.getElementById("status");
       const formatBytes = (bytes) => bytes < 1024 ? bytes + " B" : bytes < 1048576 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1048576).toFixed(1) + " MB";
+      const findImage = (value) => {
+        const metadata = value?.toolResponseMetadata || value?._meta || {};
+        const output = value?.toolOutput || value?.structuredContent || value || {};
+        const nativeImage = Array.isArray(value?.content)
+          ? value.content.find((item) => item?.type === "image" && item?.data && item?.mimeType)
+          : undefined;
+        return metadata.webgpt_image_preview
+          || output.webgpt_image_preview
+          || (nativeImage ? {
+            name: output.name || "image",
+            mime_type: nativeImage.mimeType,
+            bytes: Math.floor(nativeImage.data.length * 0.75),
+            data_url: "data:" + nativeImage.mimeType + ";base64," + nativeImage.data,
+          } : undefined);
+      };
       const render = (globals) => {
         const api = window.openai || {};
-        const metadata = globals?.toolResponseMetadata || api.toolResponseMetadata || {};
-        const output = globals?.toolOutput || api.toolOutput || {};
-        const image = metadata.webgpt_image_preview || output.webgpt_image_preview;
+        const image = findImage(globals) || findImage({
+          toolResponseMetadata: api.toolResponseMetadata,
+          toolOutput: api.toolOutput,
+        });
         if (!image?.data_url) return false;
         preview.src = image.data_url;
         preview.alt = "本地图片预览：" + (image.name || "image");
@@ -49,6 +66,18 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
       };
       render();
       window.addEventListener("openai:set_globals", (event) => render(event.detail?.globals));
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (message?.jsonrpc !== "2.0") return;
+        if (message.method === "ui/notifications/tool-result") render(message.params);
+      }, { passive: true });
+      window.parent.postMessage({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "ui/initialize",
+        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "webgpt-image-preview", version: "0.1.0" } },
+      }, "*");
     })();
   </script>
 </body>
