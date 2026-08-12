@@ -2,10 +2,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import sharp from "sharp";
 import type { LunaSandbox } from "./types";
 import { terminateOwnedProcessTree } from "./process-tree";
 
 const MAX_DIRECT_IMAGE_BYTES = 20_000_000;
+const MAX_SOURCE_IMAGE_BYTES = 50_000_000;
+const MODEL_IMAGE_MAX_DIMENSION = 1_600;
 
 export interface DirectTextFileRead {
   path: string;
@@ -18,6 +21,11 @@ export interface DirectImageFileRead {
   mimeType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
   data: string;
   bytes: number;
+  optimized?: boolean;
+  sourceBytes?: number;
+  sourceMimeType?: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  width?: number;
+  height?: number;
 }
 
 function imageMimeType(bytes: Buffer): DirectImageFileRead["mimeType"] | null {
@@ -84,6 +92,60 @@ export class DirectToolService {
     }
     const text = bytes.toString("utf8");
     return { path: target, text: text.slice(0, maxChars), truncated: text.length > maxChars };
+  }
+
+  async readForTransfer(
+    path: string,
+    workspace: string,
+    mode: LunaSandbox,
+    maxChars = 200_000,
+    maxImageBytes = 1_500_000,
+  ): Promise<DirectTextFileRead | DirectImageFileRead> {
+    const target = resolveScopedPath(path, workspace, mode);
+    const source = readFileSync(target);
+    const sourceMimeType = imageMimeType(source);
+    if (!sourceMimeType) {
+      const text = source.toString("utf8");
+      return { path: target, text: text.slice(0, maxChars), truncated: text.length > maxChars };
+    }
+    if (source.length > MAX_SOURCE_IMAGE_BYTES) {
+      throw new Error(`Image exceeds the ${MAX_SOURCE_IMAGE_BYTES}-byte local decode limit: ${target}`);
+    }
+    const limit = Math.min(Math.max(1, maxImageBytes), MAX_DIRECT_IMAGE_BYTES);
+    const metadata = await sharp(source, { animated: false }).metadata();
+    const width = metadata.width ?? 0;
+    const height = metadata.height ?? 0;
+    if (source.length <= limit && width <= MODEL_IMAGE_MAX_DIMENSION && height <= MODEL_IMAGE_MAX_DIMENSION) {
+      return { path: target, mimeType: sourceMimeType, data: source.toString("base64"), bytes: source.length, width, height };
+    }
+
+    let best: { bytes: Buffer; width: number; height: number } | undefined;
+    for (const dimension of [1_600, 1_280, 1_024, 768, 512]) {
+      for (const quality of [82, 72, 62]) {
+        const transformed = await sharp(source, { animated: false })
+          .rotate()
+          .resize({ width: dimension, height: dimension, fit: "inside", withoutEnlargement: true })
+          .webp({ quality, effort: 4 })
+          .toBuffer({ resolveWithObject: true });
+        if (!best || transformed.data.length < best.bytes.length) {
+          best = { bytes: transformed.data, width: transformed.info.width, height: transformed.info.height };
+        }
+        if (transformed.data.length <= limit) {
+          return {
+            path: target,
+            mimeType: "image/webp",
+            data: transformed.data.toString("base64"),
+            bytes: transformed.data.length,
+            optimized: true,
+            sourceBytes: source.length,
+            sourceMimeType,
+            width: transformed.info.width,
+            height: transformed.info.height,
+          };
+        }
+      }
+    }
+    throw new Error(`Image could not be reduced below the ${limit}-byte MCP transfer limit: ${target} (smallest ${best?.bytes.length ?? source.length} bytes)`);
   }
 
   list(path: string, workspace: string, mode: LunaSandbox): { path: string; entries: Array<{ name: string; kind: string; size?: number }> } {

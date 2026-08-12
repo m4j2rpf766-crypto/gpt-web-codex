@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sharp from "sharp";
 import { buildCodexInvocation } from "../src/standalone/codex-command";
 import { DirectToolService, resolveScopedPath } from "../src/standalone/direct-tools";
 import { IMAGE_PREVIEW_MIME_TYPE, IMAGE_PREVIEW_RESOURCE_URI } from "../src/standalone/image-preview";
@@ -292,6 +293,27 @@ test("direct file reads preserve supported images as bounded native content", ()
   }
 });
 
+test("model image transfers compact high-resolution files without modifying the source", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-image-optimize-"));
+  const imagePath = join(root, "large.png");
+  try {
+    await sharp({ create: { width: 3_000, height: 2_000, channels: 4, background: "#2f6feb" } }).png().toFile(imagePath);
+    const source = readFileSync(imagePath);
+    const value = await new DirectToolService().readForTransfer("large.png", root, "read-only");
+    expect("data" in value).toBe(true);
+    if (!("data" in value)) throw new Error("expected an image transfer");
+    expect(value).toMatchObject({
+      path: imagePath, mimeType: "image/webp", optimized: true,
+      sourceBytes: source.length, sourceMimeType: "image/png", width: 1_600,
+    });
+    expect(value.height).toBeLessThanOrEqual(1_600);
+    expect(value.bytes).toBeLessThanOrEqual(1_500_000);
+    expect(readFileSync(imagePath)).toEqual(source);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("standalone MCP exposes Luna and direct tools without a turn broker", async () => {
   const root = mkdtempSync(join(tmpdir(), "webgpt-mcp-"));
   const transport = new StdioClientTransport({
@@ -416,7 +438,7 @@ test("completed Luna image status returns native image content and inline previe
     const content = output.content as Array<{ type: string; data?: string }>;
     expect(content.some(item => item.type === "image" && item.data === image.toString("base64"))).toBe(true);
     expect(output._meta?.webgpt_image_preview).toEqual({
-      name: "luna-preview.png", mime_type: "image/png", bytes: image.length,
+      name: "luna-preview.png", mime_type: "image/png", bytes: image.length, width: 1, height: 1,
       data_url: `data:image/png;base64,${image.toString("base64")}`,
     });
   } finally {
@@ -455,7 +477,7 @@ test("standalone MCP file_read transmits an image content block without base64 d
       arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
     });
     expect(output.content).toEqual([
-      { type: "text", text: JSON.stringify({ path: join(root, "pixel.png"), mime_type: "image/png", bytes: image.length }) },
+      { type: "text", text: JSON.stringify({ path: join(root, "pixel.png"), mime_type: "image/png", bytes: image.length, width: 1, height: 1 }) },
       { type: "image", data: image.toString("base64"), mimeType: "image/png" },
     ]);
     expect(JSON.stringify(output.structuredContent)).not.toContain(image.toString("base64"));
@@ -465,12 +487,14 @@ test("standalone MCP file_read transmits an image content block without base64 d
       arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
     });
     expect(rendered.structuredContent).toEqual({
-      path: join(root, "pixel.png"), mime_type: "image/png", bytes: image.length,
+      path: join(root, "pixel.png"), mime_type: "image/png", bytes: image.length, width: 1, height: 1,
     });
     expect(rendered._meta?.webgpt_image_preview).toEqual({
       name: "pixel.png",
       mime_type: "image/png",
       bytes: image.length,
+      width: 1,
+      height: 1,
       data_url: `data:image/png;base64,${image.toString("base64")}`,
     });
     writeFileSync(join(root, "plain.txt"), "not an image");

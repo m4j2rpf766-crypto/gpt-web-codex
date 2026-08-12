@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { cpSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import sharp from "sharp";
 import { VERSION } from "../src/version";
 
 const sourceBundle = resolve(process.argv[2] ?? "dist/runtime");
@@ -65,6 +66,17 @@ try {
     }
     if (initReasoning.default !== "low") {
       throw new Error("codexluna_init does not default reasoning_effort to low");
+    }
+    const largeImage = join(root, "large-image.png");
+    await sharp({ create: { width: 3_000, height: 2_000, channels: 4, background: "#2f6feb" } }).png().toFile(largeImage);
+    const imageResult = await client.callTool({
+      name: "file_read",
+      arguments: { path: largeImage, workspace_path: root, permission_mode: "read-only" },
+    });
+    const imageMetadata = imageResult.structuredContent as Record<string, unknown>;
+    if (imageResult.isError || imageMetadata.optimized !== true || imageMetadata.mime_type !== "image/webp"
+      || Number(imageMetadata.bytes) > 1_500_000 || Number(imageMetadata.width) > 1_600 || Number(imageMetadata.height) > 1_600) {
+      throw new Error(`Relocated MCP runtime did not compact a high-resolution image: ${JSON.stringify(imageMetadata)}`);
     }
   } finally {
     await client.close();

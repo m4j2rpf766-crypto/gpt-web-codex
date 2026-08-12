@@ -93,17 +93,30 @@ function lunaResult(value: Record<string, unknown>, isError = false) {
   return result({ ...value, session_policy: COMPACT_SESSION_POLICY }, isError);
 }
 
+function imageMetadata(value: Extract<Awaited<ReturnType<DirectToolService["readForTransfer"]>>, { data: string }>) {
+  return {
+    path: value.path,
+    mime_type: value.mimeType,
+    bytes: value.bytes,
+    ...(value.optimized === undefined ? {} : { optimized: value.optimized }),
+    ...(value.sourceBytes === undefined ? {} : { source_bytes: value.sourceBytes }),
+    ...(value.sourceMimeType === undefined ? {} : { source_mime_type: value.sourceMimeType }),
+    ...(value.width === undefined ? {} : { width: value.width }),
+    ...(value.height === undefined ? {} : { height: value.height }),
+  };
+}
+
 function lunaStatusResult(
   value: Record<string, unknown>,
-  preview: ReturnType<DirectToolService["read"]> | undefined,
+  preview: Awaited<ReturnType<DirectToolService["readForTransfer"]>> | undefined,
 ) {
   const structured = { ...value, session_policy: COMPACT_SESSION_POLICY };
   if (!preview || !("data" in preview)) return result(structured);
   const name = preview.path.replaceAll("\\", "/").split("/").at(-1) || "image";
+  const { path: _path, ...previewMetadata } = imageMetadata(preview);
   const metadata = {
     name,
-    mime_type: preview.mimeType,
-    bytes: preview.bytes,
+    ...previewMetadata,
     data_url: `data:${preview.mimeType};base64,${preview.data}`,
   };
   return {
@@ -116,9 +129,9 @@ function lunaStatusResult(
   };
 }
 
-function fileReadResult(value: ReturnType<DirectToolService["read"]>) {
+function fileReadResult(value: Awaited<ReturnType<DirectToolService["readForTransfer"]>>) {
   if (!("data" in value)) return result({ ...value });
-  const metadata = { path: value.path, mime_type: value.mimeType, bytes: value.bytes };
+  const metadata = imageMetadata(value);
   return {
     content: [
       { type: "text" as const, text: JSON.stringify(metadata) },
@@ -128,18 +141,18 @@ function fileReadResult(value: ReturnType<DirectToolService["read"]>) {
   };
 }
 
-function fileImagePreviewResult(value: ReturnType<DirectToolService["read"]>) {
+function fileImagePreviewResult(value: Awaited<ReturnType<DirectToolService["readForTransfer"]>>) {
   if (!("data" in value)) throw new Error(`Local file is not a supported image: ${value.path}`);
-  const metadata = { path: value.path, mime_type: value.mimeType, bytes: value.bytes };
+  const metadata = imageMetadata(value);
   const name = value.path.replaceAll("\\", "/").split("/").at(-1) || "image";
+  const { path: _path, ...previewMetadata } = metadata;
   return {
     content: [{ type: "text" as const, text: `Displaying local image preview: ${name}` }],
     structuredContent: metadata,
     _meta: {
       webgpt_image_preview: {
         name,
-        mime_type: value.mimeType,
-        bytes: value.bytes,
+        ...previewMetadata,
         data_url: `data:${value.mimeType};base64,${value.data}`,
       },
     },
@@ -306,12 +319,12 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     },
   }, async ({ job_id }) => {
     const job = jobs.get(job_id);
-    let preview: ReturnType<DirectToolService["read"]> | undefined;
+    let preview: Awaited<ReturnType<DirectToolService["readForTransfer"]>> | undefined;
     let previewError: string | null = null;
     const previewPath = job.status === "completed" && job.wantsImagePreview ? job.imageArtifacts?.[0] : undefined;
     if (previewPath) {
       try {
-        preview = direct.read(previewPath, job.cwd, job.sandbox, 1, 10_000_000);
+        preview = await direct.readForTransfer(previewPath, job.cwd, job.sandbox, 1, 1_500_000);
       } catch (error) {
         previewError = error instanceof Error ? error.message : String(error);
       }
@@ -369,24 +382,33 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
 
   server.registerTool("file_read", {
     title: "Read a local text file or image",
-    description: "Read text directly or transfer a PNG, JPEG, GIF, or WebP image as a native MCP image content block so ChatGPT can inspect it. To visibly render an image in the conversation, call file_image_preview with the same path and workspace after inspection. The resolved path and disclosed workspace are checked unless full access is selected. Images default to a 10 MB transfer limit and never appear as base64 text.",
-    inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_chars: z.number().int().min(1).max(1_000_000).default(200_000), max_image_bytes: z.number().int().min(1).max(20_000_000).default(10_000_000) },
+    description: "Read text directly or transfer a PNG, JPEG, GIF, or WebP image as a native MCP image content block so ChatGPT can inspect it. Large or high-resolution images are automatically downscaled and encoded as a compact WebP preview without modifying the local file, reducing conversation-context usage. To visibly render an image in the conversation, call file_image_preview with the same path and workspace after inspection. The resolved path and disclosed workspace are checked unless full access is selected. Images default to a 1.5 MB transfer limit and never appear as base64 text.",
+    inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_chars: z.number().int().min(1).max(1_000_000).default(200_000), max_image_bytes: z.number().int().min(50_000).max(20_000_000).default(1_500_000) },
     outputSchema: {
       path: z.string(),
       mime_type: z.string().optional(),
       bytes: z.number().int().nonnegative().optional(),
+      optimized: z.boolean().optional(),
+      source_bytes: z.number().int().nonnegative().optional(),
+      source_mime_type: z.string().optional(),
+      width: z.number().int().nonnegative().optional(),
+      height: z.number().int().nonnegative().optional(),
       text: z.string().optional(),
       truncated: z.boolean().optional(),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { securitySchemes: noAuth },
-  }, async input => fileReadResult(direct.read(input.path, input.workspace_path, input.permission_mode, input.max_chars, input.max_image_bytes)));
+  }, async input => fileReadResult(await direct.readForTransfer(input.path, input.workspace_path, input.permission_mode, input.max_chars, input.max_image_bytes)));
 
   server.registerTool("file_image_preview", {
     title: "Display a local image inline",
-    description: "Render a PNG, JPEG, GIF, or WebP file as a visible inline image card in the ChatGPT conversation. Use this presentation tool whenever the user asks to see or preview a local image. The resolved path and disclosed workspace are checked unless full access is selected.",
-    inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_image_bytes: z.number().int().min(1).max(20_000_000).default(10_000_000) },
-    outputSchema: { path: z.string(), mime_type: z.string(), bytes: z.number().int().nonnegative() },
+    description: "Render a PNG, JPEG, GIF, or WebP file as a visible inline image card in the ChatGPT conversation. Large or high-resolution images are automatically downscaled and encoded as a compact WebP preview without modifying the local file. Use this presentation tool whenever the user asks to see or preview a local image. The resolved path and disclosed workspace are checked unless full access is selected.",
+    inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_image_bytes: z.number().int().min(50_000).max(20_000_000).default(1_500_000) },
+    outputSchema: {
+      path: z.string(), mime_type: z.string(), bytes: z.number().int().nonnegative(), optimized: z.boolean().optional(),
+      source_bytes: z.number().int().nonnegative().optional(), source_mime_type: z.string().optional(),
+      width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(),
+    },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: {
       securitySchemes: noAuth,
@@ -396,7 +418,7 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
       "openai/toolInvocation/invoking": "正在准备图片预览",
       "openai/toolInvocation/invoked": "图片预览已就绪",
     },
-  }, async input => fileImagePreviewResult(direct.read(input.path, input.workspace_path, input.permission_mode, 1, input.max_image_bytes)));
+  }, async input => fileImagePreviewResult(await direct.readForTransfer(input.path, input.workspace_path, input.permission_mode, 1, input.max_image_bytes)));
 
   server.registerTool("file_list", {
     title: "List a local directory",
