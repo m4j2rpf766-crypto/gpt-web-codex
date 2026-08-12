@@ -27,7 +27,7 @@ export const COMPACT_SESSION_POLICY =
 
 export const MCP_SERVER_INSTRUCTIONS = [
   "Use codexluna_init before the first codexluna_start in a new ChatGPT conversation.",
-  "Treat the returned web_session_id as private to that conversation and reuse it only when continuing the same conversation.",
+  "Omit web_session_id when ChatGPT supplies openai/session metadata; otherwise treat the returned web_session_id as private to that conversation and reuse it only in the same conversation.",
   "When the user asks to see or preview a local image, locating a path or receiving Luna text is not a rendered preview. Use file_image_preview directly, or poll codexluna_status until it returns image_preview_rendered=true. Never claim that an image is displayed unless an MCP tool result actually contains the image preview.",
   SESSION_BOUNDARY_NOTICE,
 ].join("\n\n");

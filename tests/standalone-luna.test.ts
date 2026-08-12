@@ -53,7 +53,7 @@ async function inspectBindingThroughFreshMcp(statePath: string, webSessionId: st
       arguments: { web_session_id: webSessionId },
     });
     if (response.isError) throw new Error(JSON.stringify(response.structuredContent));
-    return response.structuredContent as { binding: { webSessionId: string; lunaSessionId?: string } };
+    return response.structuredContent as { binding: { web_session_id: string; luna_session_id: string | null } };
   } finally {
     await client.close();
   }
@@ -214,7 +214,7 @@ test("two fresh MCP processes recover the same persisted web-to-Luna binding", a
     store.bindLunaSession(webSessionId, "luna-thread-persisted");
     const firstProcess = await inspectBindingThroughFreshMcp(statePath, webSessionId);
     const secondProcess = await inspectBindingThroughFreshMcp(statePath, webSessionId);
-    expect(firstProcess.binding).toMatchObject({ webSessionId, lunaSessionId: "luna-thread-persisted" });
+    expect(firstProcess.binding).toMatchObject({ web_session_id: webSessionId, luna_session_id: "luna-thread-persisted" });
     expect(secondProcess.binding).toEqual(firstProcess.binding);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -307,11 +307,14 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
     expect(client.getInstructions()).toContain("不得主动把本对话中的内容");
     expect(client.getInstructions()).toContain("无需要求用户回复确认口令");
     expect(client.getInstructions()).toContain("Never claim that an image is displayed");
-    const names = (await client.listTools()).tools.map(tool => tool.name).sort();
+    const listedTools = (await client.listTools()).tools;
+    const names = listedTools.map(tool => tool.name).sort();
     expect(names).toEqual([
       "codexluna_cancel", "codexluna_init", "codexluna_session", "codexluna_start", "codexluna_status",
       "file_image_preview", "file_list", "file_read", "file_search", "file_write", "terminal_cancel", "terminal_start", "terminal_status",
     ]);
+    expect(listedTools.every(tool => tool.outputSchema && typeof tool.outputSchema === "object")).toBe(true);
+    expect(listedTools.every(tool => Array.isArray(tool._meta?.securitySchemes))).toBe(true);
     const initialized = await client.callTool({
       name: "codexluna_init",
       arguments: { workspace_path: root },
@@ -333,6 +336,21 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
     });
     expect(init.session_boundary_notice).toContain("不得主动把本对话中的内容");
     expect(init.session_boundary_notice).toContain("不会修改或关闭 ChatGPT 账户");
+    const metadataInitialized = await client.callTool({
+      name: "codexluna_init",
+      arguments: { workspace_path: root },
+      _meta: { "openai/session": "stable-chatgpt-conversation" },
+    });
+    const metadataInit = metadataInitialized.structuredContent as { web_session_id: string };
+    expect(metadataInit.web_session_id).toMatch(/^chatgpt:[a-f0-9]{64}$/);
+    const metadataBinding = await client.callTool({
+      name: "codexluna_session",
+      arguments: {},
+      _meta: { "openai/session": "stable-chatgpt-conversation" },
+    });
+    expect(metadataBinding.structuredContent).toMatchObject({
+      binding: { web_session_id: metadataInit.web_session_id, workspace_path: root },
+    });
     const initializedState = new LunaStateStore(join(root, "state.json")).binding(init.web_session_id);
     expect(initializedState).toMatchObject({
       workspacePath: root,
@@ -422,8 +440,8 @@ test("standalone MCP file_read transmits an image content block without base64 d
   try {
     await client.connect(transport);
     const tools = await client.listTools();
-    expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
-    expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.["ui/resourceUri"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
+    expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.["openai/outputTemplate"]).toBeUndefined();
+    expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.["ui/resourceUri"]).toBeUndefined();
     expect(tools.tools.find(tool => tool.name === "file_image_preview")?._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
     expect(tools.tools.find(tool => tool.name === "file_image_preview")?._meta?.ui).toEqual({ resourceUri: IMAGE_PREVIEW_RESOURCE_URI, visibility: ["model", "app"] });
     const resources = await client.listResources();
@@ -441,12 +459,7 @@ test("standalone MCP file_read transmits an image content block without base64 d
       { type: "image", data: image.toString("base64"), mimeType: "image/png" },
     ]);
     expect(JSON.stringify(output.structuredContent)).not.toContain(image.toString("base64"));
-    expect(output._meta?.webgpt_image_preview).toEqual({
-      name: "pixel.png",
-      mime_type: "image/png",
-      bytes: image.length,
-      data_url: `data:image/png;base64,${image.toString("base64")}`,
-    });
+    expect(output._meta?.webgpt_image_preview).toBeUndefined();
     const rendered = await client.callTool({
       name: "file_image_preview",
       arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
@@ -460,6 +473,13 @@ test("standalone MCP file_read transmits an image content block without base64 d
       bytes: image.length,
       data_url: `data:image/png;base64,${image.toString("base64")}`,
     });
+    writeFileSync(join(root, "plain.txt"), "not an image");
+    const rejected = await client.callTool({
+      name: "file_image_preview",
+      arguments: { path: "plain.txt", workspace_path: root, permission_mode: "read-only" },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected.content)).toContain("not a supported image");
   } finally {
     await client.close();
     rmSync(root, { recursive: true, force: true });

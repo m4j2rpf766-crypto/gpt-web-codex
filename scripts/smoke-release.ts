@@ -46,6 +46,23 @@ try {
     for (const required of ["codexluna_start", "codexluna_status", "file_read", "terminal_start"]) {
       if (!names.has(required)) throw new Error(`Relocated MCP runtime is missing ${required}`);
     }
+    const missingOutputSchema = tools.tools.filter(tool => !tool.outputSchema).map(tool => tool.name);
+    if (missingOutputSchema.length) {
+      throw new Error(`Relocated MCP runtime has tools without outputSchema: ${missingOutputSchema.join(", ")}`);
+    }
+    const missingNoAuth = tools.tools.filter(tool => !Array.isArray(tool._meta?.securitySchemes)).map(tool => tool.name);
+    if (missingNoAuth.length) {
+      throw new Error(`Relocated MCP runtime has tools without noauth metadata: ${missingNoAuth.join(", ")}`);
+    }
+    const fileRead = tools.tools.find(tool => tool.name === "file_read");
+    if (fileRead?._meta?.["openai/outputTemplate"]) {
+      throw new Error("file_read must not mount the image-preview widget for text results");
+    }
+    const initReasoning = tools.tools.find(tool => tool.name === "codexluna_init")
+      ?.inputSchema.properties?.reasoning_effort as { enum?: unknown[] } | undefined;
+    if (!initReasoning?.enum?.includes("none")) {
+      throw new Error("codexluna_init does not expose reasoning_effort=none");
+    }
   } finally {
     await client.close();
   }
