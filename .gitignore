@@ -34,6 +34,7 @@ launcher/artifacts/
 *.sqlite-wal
 *.tmp
 *.temp
+webgpt-session-e2e-*.txt
 .env.*
 !.env.example
 **/storage-state*.json

@@ -26,17 +26,34 @@ export function resolveCodexExecutable(): string {
   throw new Error("Codex executable was not found. Set WEBGPT_CODEX_EXECUTABLE to a native Codex executable.");
 }
 
-export function buildCodexInvocation(job: LunaJob, lunaSessionId?: string, command = resolveCodexExecutable()): CodexInvocation {
+export function buildCodexInvocation(
+  job: LunaJob,
+  lunaSessionId?: string,
+  command = resolveCodexExecutable(),
+  platform = process.platform,
+): CodexInvocation {
   const shared = [
     "--json",
     "--ignore-user-config",
     "--skip-git-repo-check",
     "--color", "never",
     "--model", job.model,
-    "--sandbox", job.sandbox,
     "--cd", job.cwd,
+    "--config", "approval_policy=\"never\"",
     "--config", `model_reasoning_effort=${JSON.stringify(job.reasoning)}`,
   ];
+  if (job.sandbox === "danger-full-access") {
+    shared.push("--dangerously-bypass-approvals-and-sandbox");
+  } else {
+    shared.push("--sandbox", job.sandbox);
+    // --ignore-user-config deliberately isolates Luna from the user's Codex routing and
+    // settings. On Windows it also removes the sandbox backend selection, which makes a
+    // nominal workspace-write turn behave as read-only unless it is restored per process.
+    if (platform === "win32") shared.push("--config", "windows.sandbox=\"unelevated\"");
+    if (job.sandbox === "workspace-write") {
+      shared.push("--config", "sandbox_workspace_write.network_access=true");
+    }
+  }
   if (job.fast) shared.push("--config", "service_tier=\"fast\"");
   const args = lunaSessionId
     ? ["exec", ...shared, "resume", lunaSessionId, "-"]

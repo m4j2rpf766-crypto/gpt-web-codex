@@ -67,6 +67,30 @@ test("Codex invocation ignores routing config and reads prompt from stdin", () =
     expect(invocation.args.at(-1)).toBe("-");
     expect(invocation.args.join(" ")).not.toContain("do it");
     expect(invocation.args.join(" ")).not.toContain("openai_base_url");
+    expect(invocation.args).toContain("approval_policy=\"never\"");
+    expect(invocation.args).toContain("windows.sandbox=\"unelevated\"");
+    expect(invocation.args).toContain("sandbox_workspace_write.network_access=true");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex invocation maps all three standalone permission modes explicitly", () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-permissions-"));
+  try {
+    const base = sampleJob(root);
+    const readonly = buildCodexInvocation({ ...base, sandbox: "read-only" }, undefined, "C:\\codex.exe", "win32");
+    expect(readonly.args).toContain("read-only");
+    expect(readonly.args).toContain("windows.sandbox=\"unelevated\"");
+    expect(readonly.args).not.toContain("sandbox_workspace_write.network_access=true");
+
+    const writable = buildCodexInvocation(base, undefined, "C:\\codex.exe", "win32");
+    expect(writable.args).toContain("workspace-write");
+    expect(writable.args).toContain("sandbox_workspace_write.network_access=true");
+
+    const full = buildCodexInvocation({ ...base, sandbox: "danger-full-access" }, undefined, "C:\\codex.exe", "win32");
+    expect(full.args).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(full.args).not.toContain("--sandbox");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
