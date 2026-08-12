@@ -29,5 +29,7 @@ describe("Chrome extension conversation contract", () => {
     expect(source).toContain("当前是未由扩展初始化的既有会话");
     expect(source).toContain("if (!assistantHas(Core.LUNA_TOOL_BINDING_ACK))");
     expect(source).toContain("ChatGPT 请求过于频繁");
+    expect(source).toContain("interruptedBootstrapIsRecoverable");
+    expect(source).toContain("composerText() === Core.toolBindingPrompt(webSessionId)");
   });
 });

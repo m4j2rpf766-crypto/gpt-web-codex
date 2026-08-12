@@ -187,10 +187,26 @@ async function captureHistory() {
   });
 }
 
+function interruptedBootstrapIsRecoverable() {
+  const webSessionId = Core.webSessionIdFromUrl(location.href);
+  return Boolean(webSessionId)
+    && assistantHas(Core.SESSION_MEMORY_BOUNDARY_ACK)
+    && !assistantHas(Core.LUNA_TOOL_BINDING_ACK)
+    && composerText() === Core.toolBindingPrompt(webSessionId);
+}
+
 async function start() {
   await captureHistory().catch(() => {});
   const state = await request({ type: "bootstrap-state" }).catch(() => ({ pending: false }));
-  if (state.pending) await bootstrap();
+  if (state.pending) {
+    await bootstrap();
+    return;
+  }
+  if (Core.webSessionIdFromUrl(location.href)) {
+    const recoverable = await waitFor(interruptedBootstrapIsRecoverable, "an interrupted extension bootstrap", 10000)
+      .catch(() => false);
+    if (recoverable) await bootstrap();
+  }
 }
 
 void start();
@@ -204,7 +220,7 @@ new MutationObserver(() => {
 }).observe(document.documentElement, { childList: true, subtree: true });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "session" || Core.conversationIdFromUrl(location.href)) return;
+  if (areaName !== "local" || Core.conversationIdFromUrl(location.href)) return;
   if (Object.keys(changes).some(key => key.startsWith("bootstrap:") && changes[key].newValue)) {
     void bootstrap();
   }

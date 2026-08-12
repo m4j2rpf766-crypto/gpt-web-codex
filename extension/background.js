@@ -68,11 +68,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "bootstrap-state") {
       if (!tabId) return { pending: false };
       const key = pendingKey(tabId);
-      const value = await chrome.storage.session.get(key);
-      return { pending: Boolean(value[key]) };
+      const value = await chrome.storage.local.get(key);
+      const pending = value[key];
+      if (pending && Date.now() - pending.requestedAt < 24 * 60 * 60 * 1000) return { pending: true };
+      if (pending) await chrome.storage.local.remove(key);
+      return { pending: false };
     }
     if (message?.type === "bootstrap-finished") {
-      if (tabId) await chrome.storage.session.remove(pendingKey(tabId));
+      if (tabId) await chrome.storage.local.remove(pendingKey(tabId));
       return { ok: true };
     }
     if (message?.type === "history-upsert") {
@@ -90,7 +93,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error("No active Chrome tab");
     if (message.type === "popup-new-conversation") {
-      await chrome.storage.session.set({ [pendingKey(tab.id)]: { requestedAt: Date.now() } });
+      await chrome.storage.local.set({ [pendingKey(tab.id)]: { requestedAt: Date.now() } });
       await chrome.tabs.update(tab.id, { url: "https://chatgpt.com/" });
     } else {
       await chrome.tabs.update(tab.id, { url: `https://chatgpt.com/c/${message.conversationId}` });
