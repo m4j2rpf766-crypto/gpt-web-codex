@@ -1050,7 +1050,7 @@ class BrowserHost {
     const contents = this.view.webContents;
     const chatLabels = javaScriptLiteral(CHAT_EXPERIENCE_LABELS);
     const workLabels = javaScriptLiteral(WORK_EXPERIENCE_LABELS);
-    const outcome = await contents.executeJavaScript(`(async () => {
+    const inspectionScript = `(() => {
       const visible = (element) => {
         const style = getComputedStyle(element);
         const rect = element.getBoundingClientRect();
@@ -1114,10 +1114,15 @@ class BrowserHost {
       const inspect = () => {
         const pair = findPair();
         if (!pair) return { selected: null, reason: "chat_work_controls_missing" };
+        const chatRect = pair.chat.getBoundingClientRect();
+        const chatPoint = {
+          x: Math.round(chatRect.left + chatRect.width / 2),
+          y: Math.round(chatRect.top + chatRect.height / 2),
+        };
         const chatMarked = marker(pair.chat, pair.group);
         const workMarked = marker(pair.work, pair.group);
         if (chatMarked !== workMarked) {
-          return { selected: chatMarked ? "chat" : "work", reason: "semantic_marker", pair };
+          return { selected: chatMarked ? "chat" : "work", reason: "semantic_marker", chatPoint };
         }
         const chatDistance = visualDistance(pair.chat, pair.group);
         const workDistance = visualDistance(pair.work, pair.group);
@@ -1125,30 +1130,63 @@ class BrowserHost {
           return {
             selected: chatDistance > workDistance ? "chat" : "work",
             reason: "selected_surface",
-            pair,
+            chatPoint,
           };
         }
-        return { selected: null, reason: "selection_ambiguous", pair };
+        return { selected: null, reason: "selection_ambiguous", chatPoint };
       };
-      let inspected = inspect();
-      if (!inspected.pair) return { ok: false, selected: inspected.selected, reason: inspected.reason };
-      let switched = false;
-      if (inspected.selected !== "chat") {
-        inspected.pair.chat.click();
-        switched = true;
-        for (let attempt = 0; attempt < 30; attempt += 1) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          inspected = inspect();
-          if (inspected.selected === "chat") break;
+      return inspect();
+    })()`;
+    let inspected = await contents.executeJavaScript(inspectionScript, true);
+    let switched = false;
+    let switchMethod = null;
+    if (inspected?.selected !== "chat" && inspected?.chatPoint) {
+      contents.focus();
+      contents.sendInputEvent({ type: "mouseMove", ...inspected.chatPoint });
+      await sleep(60);
+      contents.sendInputEvent({ type: "mouseDown", ...inspected.chatPoint, button: "left", clickCount: 1 });
+      await sleep(60);
+      contents.sendInputEvent({ type: "mouseUp", ...inspected.chatPoint, button: "left", clickCount: 1 });
+      switched = true;
+      switchMethod = "pointer";
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await sleep(100);
+        inspected = await contents.executeJavaScript(inspectionScript, true);
+        if (inspected?.selected === "chat") break;
+      }
+      if (inspected?.selected !== "chat") {
+        const focused = await contents.executeJavaScript(`(() => {
+          const labels = new Set(${chatLabels});
+          const label = element => (element.getAttribute("aria-label") || element.textContent || "")
+            .replace(/\\s+/g, " ").trim();
+          for (const group of document.querySelectorAll('[role="radiogroup"]')) {
+            const chat = [...group.querySelectorAll('[role="radio"]')]
+              .find(element => labels.has(label(element)));
+            if (!chat) continue;
+            chat.focus({ preventScroll: true });
+            return document.activeElement === chat;
+          }
+          return false;
+        })()`, true);
+        if (focused) {
+          contents.sendInputEvent({ type: "keyDown", keyCode: "Space" });
+          await sleep(60);
+          contents.sendInputEvent({ type: "keyUp", keyCode: "Space" });
+          switchMethod = "keyboard";
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            await sleep(100);
+            inspected = await contents.executeJavaScript(inspectionScript, true);
+            if (inspected?.selected === "chat") break;
+          }
         }
       }
-      return {
-        ok: inspected.selected === "chat",
-        selected: inspected.selected,
-        reason: inspected.reason,
-        switched,
-      };
-    })()`, true);
+    }
+    const outcome = {
+      ok: inspected?.selected === "chat",
+      selected: inspected?.selected,
+      reason: inspected?.reason,
+      switched,
+    };
     if (!outcome?.ok || outcome.selected !== "chat") {
       throw new Error(`ChatGPT Chat mode could not be verified (${outcome?.reason || "unknown"})`);
     }
@@ -1163,6 +1201,7 @@ class BrowserHost {
       selected: outcome.selected,
       evidence: outcome.reason,
       switched: outcome.switched === true,
+      switchMethod,
     });
   }
 

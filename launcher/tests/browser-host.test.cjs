@@ -863,15 +863,40 @@ test("a new conversation verifies Chat before sending any initial binding prompt
   assert.match(source, /selection_ambiguous/);
   assert.match(source, /selected_surface/);
   assert.match(source, /querySelectorAll\('\[role="radiogroup"\]'\)/);
+  assert.match(source, /sendInputEvent\(\{ type: "mouseDown"/);
+  assert.match(source, /sendInputEvent\(\{ type: "keyDown", keyCode: "Space"/);
+  assert.doesNotMatch(source, /pair\.chat\.click\(\)/);
 
   const accepted = Object.assign(Object.create(BrowserHost.prototype), {
-    view: { webContents: { executeJavaScript: async () => ({ ok: true, selected: "chat", reason: "semantic_marker", switched: false }), getURL: () => "https://chatgpt.com/" } },
+    view: { webContents: { executeJavaScript: async () => ({ selected: "chat", reason: "semantic_marker", chatPoint: { x: 10, y: 10 } }), getURL: () => "https://chatgpt.com/" } },
     logger: { info() {} },
   });
   await BrowserHost.prototype.ensureChatExperience.call(accepted);
 
+  const inputEvents = [];
+  let inspections = 0;
+  const switched = Object.assign(Object.create(BrowserHost.prototype), {
+    view: { webContents: {
+      executeJavaScript: async () => (++inspections === 1
+        ? { selected: "work", reason: "semantic_marker", chatPoint: { x: 123, y: 45 } }
+        : { selected: "chat", reason: "semantic_marker", chatPoint: { x: 123, y: 45 } }),
+      focus: () => inputEvents.push({ type: "focus" }),
+      sendInputEvent: event => inputEvents.push(event),
+      getURL: () => "https://chatgpt.com/",
+    } },
+    waitForAuthenticated: async () => {},
+    logger: { info() {} },
+  });
+  await BrowserHost.prototype.ensureChatExperience.call(switched);
+  assert.deepEqual(inputEvents, [
+    { type: "focus" },
+    { type: "mouseMove", x: 123, y: 45 },
+    { type: "mouseDown", x: 123, y: 45, button: "left", clickCount: 1 },
+    { type: "mouseUp", x: 123, y: 45, button: "left", clickCount: 1 },
+  ]);
+
   const ambiguous = Object.assign(Object.create(BrowserHost.prototype), {
-    view: { webContents: { executeJavaScript: async () => ({ ok: false, selected: null, reason: "selection_ambiguous", switched: true }) } },
+    view: { webContents: { executeJavaScript: async () => ({ selected: null, reason: "selection_ambiguous" }) } },
     logger: { info() {} },
   });
   await assert.rejects(
