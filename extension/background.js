@@ -31,7 +31,7 @@ async function trustedClick(tabId, point) {
   });
 }
 
-async function trustedSubmit(tabId, point, text) {
+async function trustedFill(tabId, point, text) {
   return withDebugger(tabId, async send => {
     await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
     await send("Input.dispatchMouseEvent", {
@@ -41,9 +41,6 @@ async function trustedSubmit(tabId, point, text) {
       type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 1,
     });
     await send("Input.insertText", { text });
-    await new Promise(resolve => setTimeout(resolve, 100));
-    await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
-    await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   });
 }
 
@@ -63,9 +60,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await trustedClick(tabId, message.point);
       return { ok: true };
     }
-    if (message?.type === "native-submit") {
+    if (message?.type === "native-fill") {
       if (!tabId) throw new Error("The ChatGPT tab is unavailable");
-      await trustedSubmit(tabId, message.point, message.text);
+      await trustedFill(tabId, message.point, message.text);
       return { ok: true };
     }
     if (message?.type === "bootstrap-state") {

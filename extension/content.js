@@ -51,6 +51,31 @@ function assistantHas(text) {
     .some(element => (element.innerText || element.textContent || "").includes(text));
 }
 
+function responseStopButton() {
+  return [...document.querySelectorAll('button[data-testid="stop-button"], button')]
+    .filter(visible)
+    .find(element => element.getAttribute("data-testid") === "stop-button"
+      || /^(Stop|停止回答)$/i.test(label(element))) || null;
+}
+
+function responseInProgress() {
+  return Boolean(responseStopButton());
+}
+
+function sendButton() {
+  return [...document.querySelectorAll('button[data-testid="send-button"]')]
+    .find(element => visible(element) && !element.disabled) || null;
+}
+
+function composerText(element = composer()) {
+  return (element?.innerText || element?.textContent || "").replace(/\r\n/g, "\n").trim();
+}
+
+function rateLimitDialogVisible() {
+  return [...document.querySelectorAll('[role="dialog"]')].filter(visible)
+    .some(element => /请求过于频繁|too many requests/i.test(element.innerText || element.textContent || ""));
+}
+
 async function waitFor(probe, description, timeoutMs = 180000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -96,24 +121,50 @@ async function ensureChatMode() {
 }
 
 async function submit(text) {
+  if (rateLimitDialogVisible()) throw new Error("ChatGPT 请求过于频繁；请等待几分钟后刷新此页面，扩展会继续初始化");
   const input = await waitFor(composer, "the ChatGPT composer", 30000);
-  await request({ type: "native-submit", point: point(input), text });
+  const draft = composerText(input);
+  if (draft && draft !== text.trim()) throw new Error("输入框中存在其他未发送内容，已停止自动初始化以免覆盖");
+  if (!draft) await request({ type: "native-fill", point: point(input), text });
+  const send = await waitFor(sendButton, "the enabled ChatGPT send button", 15000);
+  await request({ type: "native-click", point: point(send) });
+}
+
+async function waitForAcknowledgement(text) {
+  await waitFor(() => assistantHas(text), text);
+  const naturalDeadline = Date.now() + 5000;
+  while (responseInProgress() && Date.now() < naturalDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  const stop = responseStopButton();
+  if (stop) {
+    setStatus(`已收到 ${text}，正在结束停滞的网页生成…`);
+    await request({ type: "native-click", point: point(stop) });
+  }
+  await waitFor(() => !responseInProgress(), `${text} response completion`, 10000);
 }
 
 async function bootstrap() {
   if (bootstrapRunning) return;
   bootstrapRunning = true;
   try {
-    if (Core.conversationIdFromUrl(location.href)) throw new Error("Initialization requires a blank new conversation");
-    setStatus("正在确认 ChatGPT 聊天模式…");
-    await ensureChatMode();
-    setStatus("正在声明本次会话的记忆边界…");
-    await submit(Core.memoryBoundaryPrompt());
-    await waitFor(() => assistantHas(Core.SESSION_MEMORY_BOUNDARY_ACK), Core.SESSION_MEMORY_BOUNDARY_ACK);
-    const webSessionId = await waitFor(() => Core.webSessionIdFromUrl(location.href), "a stable /c/ conversation URL", 60000);
-    setStatus("正在绑定 WebGPT Luna 本地工具…");
-    await submit(Core.toolBindingPrompt(webSessionId));
-    await waitFor(() => assistantHas(Core.LUNA_TOOL_BINDING_ACK), Core.LUNA_TOOL_BINDING_ACK);
+    let webSessionId = Core.webSessionIdFromUrl(location.href);
+    if (!webSessionId) {
+      setStatus("正在确认 ChatGPT 聊天模式…");
+      await ensureChatMode();
+      setStatus("正在声明本次会话的记忆边界…");
+      await submit(Core.memoryBoundaryPrompt());
+      await waitForAcknowledgement(Core.SESSION_MEMORY_BOUNDARY_ACK);
+      webSessionId = await waitFor(() => Core.webSessionIdFromUrl(location.href), "a stable /c/ conversation URL", 60000);
+    } else if (!assistantHas(Core.SESSION_MEMORY_BOUNDARY_ACK) && !assistantHas(Core.LUNA_TOOL_BINDING_ACK)) {
+      throw new Error("当前是未由扩展初始化的既有会话；不会向其中补发初始化提示词");
+    }
+    if (!assistantHas(Core.LUNA_TOOL_BINDING_ACK)) {
+      await waitForAcknowledgement(Core.SESSION_MEMORY_BOUNDARY_ACK);
+      setStatus("正在绑定 WebGPT Luna 本地工具…");
+      await submit(Core.toolBindingPrompt(webSessionId));
+      await waitForAcknowledgement(Core.LUNA_TOOL_BINDING_ACK);
+    }
     if (Core.webSessionIdFromUrl(location.href) !== webSessionId) throw new Error("The conversation changed during initialization");
     localStorage.setItem(`webgpt.boundary.${webSessionId}`, "1");
     await request({ type: "bootstrap-finished" });

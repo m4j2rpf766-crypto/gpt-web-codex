@@ -18,5 +18,18 @@ The `debugger` permission is used only for short, trusted pointer/keyboard input
 Chat mode and submitting the two visible bootstrap messages. The extension detaches immediately
 after each input operation. Existing conversations are never bootstrapped again.
 
+Chrome **Developer mode** and the extension's `debugger` permission are separate:
+
+- Loading this source directory unpacked requires Developer mode. A Chrome Web Store release can be
+  installed normally without Developer mode.
+- Full automatic Chat/Work switching currently requires the `debugger` permission so Chrome can
+  deliver trusted input. A future no-debugger variant must either ask the user to select Chat
+  manually or use a separately installed native input helper.
+
+If an acknowledgement is already visible but ChatGPT's streaming control remains stuck, the
+extension waits five seconds, stops that completed acknowledgement, and resumes. Reloading an
+interrupted extension-owned `/c/` conversation resumes from its visible acknowledgement and saved
+draft instead of replaying the memory-boundary message.
+
 The standalone WebGPT Luna MCP runtime and OpenAI tunnel remain separate background components.
 The extension does not modify Codex configuration or routing.
