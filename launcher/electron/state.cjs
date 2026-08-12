@@ -10,10 +10,7 @@ const DEFAULT_STATE = Object.freeze({
   onboardingComplete: false,
   githubOpened: false,
   xOpened: false,
-  autoStart: true,
-  bridgeEnabled: false,
   keepRunningOnClose: true,
-  showBrowserDuringTurns: true,
   browserSmokePassed: false,
   browserSmokeVersion: null,
   sidebarOpen: true,
@@ -31,7 +28,23 @@ function readState(filePath) {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
     if (!parsed || parsed.version !== 1) return { ...DEFAULT_STATE };
-    const state = { ...DEFAULT_STATE, ...parsed };
+    const state = {
+      ...DEFAULT_STATE,
+      language: parsed.language,
+      onboardingComplete: parsed.onboardingComplete,
+      githubOpened: parsed.githubOpened,
+      xOpened: parsed.xOpened,
+      keepRunningOnClose: parsed.keepRunningOnClose,
+      browserSmokePassed: parsed.browserSmokePassed,
+      browserSmokeVersion: parsed.browserSmokeVersion,
+      sidebarOpen: parsed.sidebarOpen,
+      sidebarWidth: parsed.sidebarWidth,
+      mcpGuideStep: parsed.mcpGuideStep,
+      sessionRefreshReminderAt: parsed.sessionRefreshReminderAt,
+      ...(parsed.coreSetupComplete === undefined ? {} : { coreSetupComplete: parsed.coreSetupComplete }),
+      ...(parsed.mcpSetupComplete === undefined ? {} : { mcpSetupComplete: parsed.mcpSetupComplete }),
+      ...(parsed.mcpRuntimeInstalled === undefined ? {} : { mcpRuntimeInstalled: parsed.mcpRuntimeInstalled }),
+    };
     if (state.language !== null && state.language !== "en" && state.language !== "zh-CN") {
       state.language = DEFAULT_STATE.language;
     }
@@ -39,10 +52,7 @@ function readState(filePath) {
       "onboardingComplete",
       "githubOpened",
       "xOpened",
-      "autoStart",
-      "bridgeEnabled",
       "keepRunningOnClose",
-      "showBrowserDuringTurns",
       "browserSmokePassed",
       "sidebarOpen",
     ]) {
@@ -67,10 +77,8 @@ function readState(filePath) {
     }
     for (const key of [
       "coreSetupComplete",
-      "codexCatalogVerified",
       "mcpSetupComplete",
       "mcpRuntimeInstalled",
-      "codexRestartRequired",
     ]) {
       if (state[key] !== undefined && typeof state[key] !== "boolean") delete state[key];
     }
@@ -96,6 +104,9 @@ function validateSidebarState(value) {
 
 function createStateStore(filePath) {
   let state = readState(filePath);
+  // Rewrite once on load so retired routing/autostart keys do not linger in
+  // persisted launcher state after the standalone migration.
+  writeState(filePath, state);
   return {
     read() {
       return structuredClone(state);

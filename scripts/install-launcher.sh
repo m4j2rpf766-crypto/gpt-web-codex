@@ -40,16 +40,16 @@ if [ -z "$VERSION" ]; then
 fi
 VERSION="${VERSION#v}"
 if [ -z "$VERSION" ]; then
-  echo "Could not resolve the latest Codex Web GPT release" >&2
+  echo "Could not resolve the latest GPT Web Codex release" >&2
   exit 1
 fi
 case "$VERSION" in
   *[!A-Za-z0-9._-]*) echo "Invalid release version: $VERSION" >&2; exit 1 ;;
 esac
 
-ASSET="codex-web-gpt-$VERSION-$PLATFORM-$ARCH.$EXTENSION"
+ASSET="gpt-web-codex-$VERSION-$PLATFORM-$ARCH.$EXTENSION"
 BASE_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION"
-TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex-web-gpt-launcher.XXXXXX")"
+TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gpt-web-codex-launcher.XXXXXX")"
 trap 'rm -rf "$TEMP_DIR"' EXIT HUP INT TERM
 
 curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 900 \
@@ -76,8 +76,8 @@ if [ "$OS" = "Darwin" ]; then
   STAGE_DIR="$TEMP_DIR/stage"
   mkdir "$STAGE_DIR"
   ditto -x -k "$TEMP_DIR/$ASSET" "$STAGE_DIR"
-  SOURCE_APP="$STAGE_DIR/Codex Web GPT.app"
-  if [ ! -d "$SOURCE_APP" ] || [ ! -x "$SOURCE_APP/Contents/MacOS/Codex Web GPT" ]; then
+  SOURCE_APP="$STAGE_DIR/GPT Web Codex.app"
+  if [ ! -d "$SOURCE_APP" ] || [ ! -x "$SOURCE_APP/Contents/MacOS/GPT Web Codex" ]; then
     echo "Launcher archive is incomplete" >&2
     exit 1
   fi
@@ -85,12 +85,12 @@ if [ "$OS" = "Darwin" ]; then
     INSTALL_DIR="$HOME/Applications"
     mkdir -p "$INSTALL_DIR"
   fi
-  TARGET_APP="$INSTALL_DIR/Codex Web GPT.app"
-  if pgrep -x "Codex Web GPT" >/dev/null 2>&1; then
-    echo "Quit Codex Web GPT before updating it" >&2
+  TARGET_APP="$INSTALL_DIR/GPT Web Codex.app"
+  if pgrep -x "GPT Web Codex" >/dev/null 2>&1; then
+    echo "Quit GPT Web Codex before updating it" >&2
     exit 1
   fi
-  BACKUP_APP="$TEMP_DIR/Codex Web GPT.previous.app"
+  BACKUP_APP="$TEMP_DIR/GPT Web Codex.previous.app"
   if [ -e "$TARGET_APP" ]; then mv "$TARGET_APP" "$BACKUP_APP"; fi
   if ! ditto "$SOURCE_APP" "$TARGET_APP"; then
     rm -rf "$TARGET_APP"
@@ -102,11 +102,11 @@ if [ "$OS" = "Darwin" ]; then
   exit 0
 fi
 
-LIB_DIR="${CODEX_WEB_GPT_LIB_DIR:-$HOME/.local/lib/codex-web-gpt}"
+LIB_DIR="${CODEX_WEB_GPT_LIB_DIR:-$HOME/.local/lib/gpt-web-codex}"
 BIN_DIR="${CODEX_WEB_GPT_BIN_DIR:-$HOME/.local/bin}"
 TARGET_DIR="$LIB_DIR/$VERSION"
-TARGET="$TARGET_DIR/Codex Web GPT.AppImage"
-WRAPPER="$BIN_DIR/codex-web-gpt"
+TARGET="$TARGET_DIR/GPT Web Codex.AppImage"
+WRAPPER="$BIN_DIR/gpt-web-codex"
 CORE_HOME="${CODEX_CHATGPT_WEB_HOME:-$HOME/.codex-chatgpt-web}"
 DESCRIPTOR="$CORE_HOME/runtime/launcher-browser.json"
 RUNNING_PID=""
@@ -114,8 +114,8 @@ if [ -f "$DESCRIPTOR" ]; then
   RUNNING_PID="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$DESCRIPTOR" | head -n 1)"
 fi
 if { [ -n "$RUNNING_PID" ] && kill -0 "$RUNNING_PID" 2>/dev/null; } \
-  || pgrep -f "Codex Web GPT\\.AppImage" >/dev/null 2>&1; then
-  echo "Quit Codex Web GPT before updating it" >&2
+  || pgrep -f "GPT Web Codex\\.AppImage" >/dev/null 2>&1; then
+  echo "Quit GPT Web Codex before updating it" >&2
   exit 1
 fi
 EXTRACT_DIR="$TEMP_DIR/appimage"
@@ -161,26 +161,26 @@ mv -f "$WRAPPER_NEXT" "$WRAPPER"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
 mkdir -p "$APPLICATIONS_DIR" "$ICON_DIR"
-install -m 0644 "$ICON_SOURCE" "$ICON_DIR/codex-web-gpt.png"
+install -m 0644 "$ICON_SOURCE" "$ICON_DIR/gpt-web-codex.png"
 DESKTOP_WRAPPER="$(printf '%s' "$WRAPPER" | sed \
   -e 's/\\/\\\\/g' \
   -e 's/"/\\"/g' \
   -e 's/`/\\`/g' \
   -e 's/\$/\\$/g' \
   -e 's/%/%%/g')"
-cat > "$APPLICATIONS_DIR/codex-web-gpt.desktop" <<EOF
+cat > "$APPLICATIONS_DIR/gpt-web-codex.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Codex Web GPT
-Comment=ChatGPT Web models inside the native Codex harness
+Name=GPT Web Codex
+Comment=ChatGPT Web planning with standalone Luna execution
 Exec="$DESKTOP_WRAPPER"
-Icon=codex-web-gpt
+Icon=gpt-web-codex
 Terminal=false
 Categories=Development;
-StartupWMClass=codex-web-gpt
+StartupWMClass=gpt-web-codex
 EOF
-chmod 0644 "$APPLICATIONS_DIR/codex-web-gpt.desktop"
+chmod 0644 "$APPLICATIONS_DIR/gpt-web-codex.desktop"
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$APPLICATIONS_DIR" >/dev/null 2>&1 || true
 fi

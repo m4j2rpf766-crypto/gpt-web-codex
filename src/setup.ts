@@ -40,7 +40,7 @@ export interface SetupOptions {
   appName?: string;
   forceLogin?: boolean;
   autoApproveToolCalls?: boolean;
-  restartService?: boolean;
+  replaceLegacyRuntime?: boolean;
   acknowledgedUnofficial?: boolean;
   tunnelId?: string;
   runtimeKeyFile?: string;
@@ -53,7 +53,6 @@ export interface SetupResult {
   loginCreated: boolean;
   serviceLoaded: boolean;
   tunnelReady: boolean | null;
-  codexRestartRequired: false;
   connectorSetupRequired: boolean;
 }
 
@@ -267,20 +266,20 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   if (!launcherOwned && process.platform !== "darwin") {
     throw new Error(
       "Terminal-only managed Chrome setup currently requires macOS. "
-      + "Use the Codex Web GPT launcher on Windows or Linux.",
+      + "Use the GPT Web Codex launcher on Windows or Linux.",
     );
   }
   const refreshTunnelWorker = tunnelWorkerRuntimeChanged(existing, config);
-  if (existing && options.restartService) config.controlToken = randomBytes(32).toString("base64url");
+  if (existing && options.replaceLegacyRuntime) config.controlToken = randomBytes(32).toString("base64url");
   const beforeService = getServiceStatus();
   if (launcherOwned && (beforeService.installed || beforeService.loaded)) {
     if (!existing) {
       throw new Error("A legacy background service exists without a verifiable configuration; refusing automatic migration");
     }
-    if (!options.restartService) {
+    if (!options.replaceLegacyRuntime) {
       throw new Error(
         "Launcher ownership migration must stop the legacy background service. "
-        + "Retry from the launcher after the active Codex task finishes.",
+        + "Retry from the launcher after the legacy runtime is idle.",
       );
     }
   }
@@ -311,10 +310,10 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       && (options.refreshAccountCapabilities === true
         || solAvailable === undefined
         || proAvailable === undefined);
-    if (beforeService.loaded && (loginRequired || capabilityProbeRequired) && !options.restartService) {
+    if (beforeService.loaded && (loginRequired || capabilityProbeRequired) && !options.replaceLegacyRuntime) {
       throw new Error(
         "Setup must verify the browser account before changing the running daemon. "
-        + "Rerun from a normal terminal with --restart-service after the active task finishes.",
+        + "Rerun from the launcher after the legacy runtime is idle.",
       );
     }
     if (beforeService.loaded && (loginRequired || capabilityProbeRequired) && existing) await assertServiceIdle(existing);
@@ -333,20 +332,20 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   config.proAvailable = config.solAvailable && proAvailable === true;
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
   const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config) || explicitTunnelChange || options.forceLogin));
-  if (beforeService.loaded && preliminaryChange && !options.restartService) {
+  if (beforeService.loaded && preliminaryChange && !options.replaceLegacyRuntime) {
     throw new Error(
       "The daemon is currently serving a Codex task and setup would change its runtime. "
-      + "Rerun from a normal terminal with --restart-service after the active task finishes.",
+      + "Rerun from the launcher after the legacy runtime is idle.",
     );
   }
   if (beforeService.loaded && preliminaryChange && existing) await assertServiceIdle(existing);
   await configureTunnel(config, existing, options);
 
   const changedWhileLoaded = Boolean(existing && beforeService.loaded && meaningfulRuntimeChange(existing, config));
-  if (changedWhileLoaded && !options.restartService) {
+  if (changedWhileLoaded && !options.replaceLegacyRuntime) {
     throw new Error(
       "The daemon is currently serving a Codex task and setup would change its runtime. "
-      + "Rerun from a normal terminal with --restart-service after the active task finishes.",
+      + "Rerun from the launcher after the legacy runtime is idle.",
     );
   }
   if (changedWhileLoaded && !preliminaryChange && existing) await assertServiceIdle(existing);
@@ -355,7 +354,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   if (!launcherOwned) {
     saveConfig(config);
     installService(config);
-    if (changedWhileLoaded && options.restartService && existing) await restartService(existing);
+    if (changedWhileLoaded && options.replaceLegacyRuntime && existing) await restartService(existing);
     await waitForProxy(config);
   }
 
@@ -406,7 +405,6 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     loginCreated,
     serviceLoaded: launcherOwned ? false : getServiceStatus().loaded,
     tunnelReady,
-    codexRestartRequired: false,
     connectorSetupRequired: config.mode === "full",
   };
 }

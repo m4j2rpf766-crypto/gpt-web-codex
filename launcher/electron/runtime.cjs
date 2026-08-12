@@ -19,7 +19,6 @@ const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
 const CORE_SETUP_TIMEOUT_MS = 5 * 60_000;
 const MCP_SETUP_TIMEOUT_MS = 10 * 60_000;
-const UNINSTALL_TIMEOUT_MS = 2 * 60_000;
 const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_LOGIN_STATE_FILE_BYTES = 16 * 1024 * 1024;
 function collect(stream, chunks, onLine, onError) {
@@ -164,28 +163,6 @@ function regularFileChanged(snapshot, platform = process.platform) {
   if (platform !== "win32" && (stat.mode & 0o777) !== snapshot.mode) return true;
   if (stat.size > MAX_CHECKPOINT_FILE_BYTES) return true;
   return !fs.readFileSync(snapshot.path).equals(snapshot.data);
-}
-
-function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = false } = {}) {
-  let result;
-  try {
-    result = JSON.parse(stdout);
-  } catch {
-    throw new Error("Codex bridge route command returned invalid JSON");
-  }
-  if (typeof result?.active !== "boolean") {
-    throw new Error("Codex bridge route command did not report its active state");
-  }
-  if (requireInstalled && typeof result.installed !== "boolean") {
-    throw new Error("Codex bridge route status did not report whether the integration is installed");
-  }
-  if (Array.isArray(result.errors) && result.errors.length > 0) {
-    throw new Error(`Codex bridge route is inconsistent: ${result.errors.join("; ")}`);
-  }
-  if (typeof expectedActive === "boolean" && result.active !== expectedActive) {
-    throw new Error(`Codex bridge route remained ${result.active ? "connected" : "disconnected"}`);
-  }
-  return result;
 }
 
 class RuntimeHost {
@@ -687,30 +664,6 @@ class RuntimeHost {
     }
   }
 
-  async bridgeStatus(operationName = "bridge-status") {
-    void operationName;
-    return { installed: false, active: false, standalone: true };
-  }
-
-  async restoreBridgeRouteWithinOperation(operationName) {
-    return await this.bridgeStatus(operationName);
-  }
-
-  async restoreBridgeRoute(operationName = "bridge-route-restore") {
-    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
-    this.lifecycleOperation = operationName;
-    try {
-      return await this.restoreBridgeRouteWithinOperation(operationName);
-    } finally {
-      this.lifecycleOperation = null;
-    }
-  }
-
-  async setBridgeEnabled(enabled) {
-    if (enabled === true) throw new Error("Codex routing is disabled by standalone WebGPT Luna");
-    return await this.bridgeStatus("standalone-route-disabled");
-  }
-
   mcpConnectorName() {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured || current.mode !== "full") {
@@ -725,61 +678,6 @@ class RuntimeHost {
     return connectorNameForSetup(current.config?.appName);
   }
 
-  cancelBrowserTurns() {
-    return this.run("cancel-browser-turns", ["service", "cancel-turns"], {
-      message: "Cancelling retained browser turns",
-      successMessage: "Retained browser turns cancelled",
-      timeoutMs: 15_000,
-    });
-  }
-
-  async uninstallIntegration() {
-    const name = "uninstall-integration";
-    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
-    const previousRuntime = this.runtimeConfigSnapshot();
-    this.lifecycleOperation = name;
-    try {
-      try {
-        if (previousRuntime.owner === "external") this.supervisor.prepareExternalMigration();
-        else await this.supervisor.stopForSetup();
-      } catch (error) {
-        try {
-          await this.restoreBridgeRouteWithinOperation(name);
-        } catch (routeError) {
-          throw new Error(
-            `${error instanceof Error ? error.message : String(error)}; restoring the previous Codex route also failed:`
-            + ` ${routeError instanceof Error ? routeError.message : String(routeError)}`,
-          );
-        }
-        throw new Error(
-          `${error instanceof Error ? error.message : String(error)}; the previous Codex route was restored,`
-          + " but launcher runtime cleanup did not complete",
-        );
-      }
-      try {
-        return await this.run(name, ["uninstall", "--yes", "--launcher-control"], {
-          embedded: true,
-          env: this.launcherControlEnvironment(),
-          message: "Restoring the previous Codex route",
-          successMessage: "Codex Web GPT integration removed",
-          timeoutMs: UNINSTALL_TIMEOUT_MS,
-        });
-      } catch (error) {
-        try {
-          await this.restoreBridgeRouteWithinOperation(name);
-        } catch (routeError) {
-          throw new Error(
-            `${error instanceof Error ? error.message : String(error)}; restoring the previous Codex route also failed:`
-            + ` ${routeError instanceof Error ? routeError.message : String(routeError)}`,
-          );
-        }
-        throw error;
-      }
-    } finally {
-      this.lifecycleOperation = null;
-    }
-  }
-
   async setupCore() {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const existing = this.runtimeConfigSnapshot();
@@ -791,13 +689,13 @@ class RuntimeHost {
       this.browserDescriptorPath,
       "--refresh-account-capabilities",
       "--acknowledge-unofficial",
-      "--restart-service",
+      "--replace-legacy-runtime",
     ];
     if (!existing.configured) args.push("--chrome", this.resolveBrowserLoginExecutable());
     if (mode === "full") args.push("--app-name", this.browserConnectorName());
     const result = await this.runSetup("core-setup", args, {
-      message: "Installing ChatGPT Web models into Codex",
-      successMessage: "Codex integration installed",
+      message: "Preparing the standalone browser and Luna runtime",
+      successMessage: "Standalone runtime prepared",
       timeoutMs: CORE_SETUP_TIMEOUT_MS,
     });
     return { ...result, mode };
@@ -819,7 +717,7 @@ class RuntimeHost {
       "--browser-host-descriptor",
       this.browserDescriptorPath,
       "--acknowledge-unofficial",
-      "--restart-service",
+      "--replace-legacy-runtime",
     ];
     if (existing.mode === "full") {
       args.push("--app-name", connectorNameForSetup(existing.config?.appName));
@@ -832,7 +730,6 @@ class RuntimeHost {
     return {
       updated: true,
       mode: existing.mode,
-      bridgeEnabled: false,
       fromVersion: existing.config.releaseVersion,
       toVersion: currentVersion,
       connectorMigrated: connectorMigrationRequired,
@@ -858,9 +755,9 @@ class RuntimeHost {
       this.browserConnectorName(),
     ];
     if (reuseSavedCredentials) {
-      args.push("--acknowledge-unofficial", "--restart-service");
+      args.push("--acknowledge-unofficial", "--replace-legacy-runtime");
       return this.runSetup("mcp-setup", args, {
-        message: "Reconnecting the native Codex harness with saved tunnel credentials",
+        message: "Reconnecting the Luna MCP harness with saved tunnel credentials",
         successMessage: "Local MCP tools are ready",
         timeoutMs: MCP_SETUP_TIMEOUT_MS,
       });
@@ -876,10 +773,10 @@ class RuntimeHost {
       "--runtime-key-file",
       keyPath,
       "--acknowledge-unofficial",
-      "--restart-service",
+      "--replace-legacy-runtime",
     );
     return this.runSetup("mcp-setup", args, {
-      message: "Connecting the native Codex harness",
+      message: "Connecting the Luna MCP harness",
       successMessage: "Local MCP tools are ready",
       timeoutMs: MCP_SETUP_TIMEOUT_MS,
     }).finally(() => fs.rmSync(keyPath, { force: true }));

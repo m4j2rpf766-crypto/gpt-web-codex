@@ -18,10 +18,10 @@ test("release comparison and platform assets are strict", () => {
   assert.equal(compareVersions("1.1.4", "1.1.4"), 0);
   assert.equal(compareVersions("1.1.3", "1.1.4"), -1);
   assert.equal(compareVersions("1.2.0", "1.1.99"), 1);
-  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "codex-web-gpt-1.2.0-mac-arm64.zip");
-  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "codex-web-gpt-1.2.0-mac-x64.zip");
-  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "codex-web-gpt-1.2.0-win-x64.exe");
-  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "codex-web-gpt-1.2.0-linux-x64.AppImage");
+  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "gpt-web-codex-1.2.0-mac-arm64.zip");
+  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "gpt-web-codex-1.2.0-mac-x64.zip");
+  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "gpt-web-codex-1.2.0-win-x64.exe");
+  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "gpt-web-codex-1.2.0-linux-x64.AppImage");
   assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), null);
 });
 
@@ -45,8 +45,8 @@ test("checksums and release URLs bind the exact expected asset", () => {
 
 test("macOS bundle resolution never guesses outside Contents/MacOS", () => {
   assert.equal(
-    macApplicationPath("/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT"),
-    "/Applications/Codex Web GPT.app",
+    macApplicationPath("/Applications/GPT Web Codex.app/Contents/MacOS/GPT Web Codex"),
+    "/Applications/GPT Web Codex.app",
   );
   assert.throws(() => macApplicationPath("/tmp/Codex Web GPT"), /Could not resolve/);
 });
@@ -70,8 +70,8 @@ test("startup check runs once and exposes only a newer complete release", async 
           tag_name: "v1.2.0",
           assets: [
             {
-              name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              name: "gpt-web-codex-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/gpt-web-codex-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
@@ -90,8 +90,8 @@ test("startup check runs once and exposes only a newer complete release", async 
 
 test("verified update is handed to one detached worker", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-update-test-"));
-  const oldAppImage = path.join(root, "versions", "1.1.4", "Codex Web GPT.AppImage");
-  const wrapper = path.join(root, "bin", "codex-web-gpt");
+  const oldAppImage = path.join(root, "versions", "1.1.4", "GPT Web Codex.AppImage");
+  const wrapper = path.join(root, "bin", "gpt-web-codex");
   fs.mkdirSync(path.dirname(oldAppImage), { recursive: true });
   fs.mkdirSync(path.dirname(wrapper), { recursive: true });
   fs.writeFileSync(oldAppImage, "old");
@@ -117,8 +117,8 @@ test("verified update is handed to one detached worker", async () => {
           tag_name: "v1.2.0",
           assets: [
             {
-              name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              name: "gpt-web-codex-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/gpt-web-codex-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
@@ -126,7 +126,7 @@ test("verified update is handed to one detached worker", async () => {
             },
           ],
         }),
-        downloadText: async () => `${hash}  codex-web-gpt-1.2.0-linux-x64.AppImage\n`,
+        downloadText: async () => `${hash}  gpt-web-codex-1.2.0-linux-x64.AppImage\n`,
         downloadFile: async (_url, destination) => fs.writeFileSync(destination, assetBody),
         sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
         spawnWorker: (runtime, worker, job) => {
@@ -160,9 +160,9 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-worker-test-"));
   const jobRoot = path.join(root, "job");
   const versionsRoot = path.join(root, "versions");
-  const oldTarget = path.join(versionsRoot, "1.1.4", "Codex Web GPT.AppImage");
-  const newTarget = path.join(versionsRoot, "1.2.0", "Codex Web GPT.AppImage");
-  const wrapper = path.join(root, "bin", "codex-web-gpt");
+  const oldTarget = path.join(versionsRoot, "1.1.4", "GPT Web Codex.AppImage");
+  const newTarget = path.join(versionsRoot, "1.2.0", "GPT Web Codex.AppImage");
+  const wrapper = path.join(root, "bin", "gpt-web-codex");
   const marker = path.join(root, "launched");
   const source = path.join(jobRoot, "update.AppImage");
   const logPath = path.join(root, "logs", "update-worker.log");
@@ -191,7 +191,7 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.existsSync(newTarget), true);
     assert.equal(fs.existsSync(path.dirname(oldTarget)), false);
-    assert.match(fs.readFileSync(wrapper, "utf8"), /versions\/1\.2\.0\/Codex Web GPT\.AppImage/);
+    assert.match(fs.readFileSync(wrapper, "utf8"), /versions\/1\.2\.0\/GPT Web Codex\.AppImage/);
     const deadline = Date.now() + 3_000;
     while (!fs.existsSync(marker) && Date.now() < deadline) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);

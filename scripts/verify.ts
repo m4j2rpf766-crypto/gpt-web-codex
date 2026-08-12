@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const scratch = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-verify-"));
+const scratch = mkdtempSync(join(tmpdir(), "gpt-web-codex-verify-"));
 const runtimeBundle = join(scratch, "runtime");
 
 async function run(args: string[]): Promise<void> {

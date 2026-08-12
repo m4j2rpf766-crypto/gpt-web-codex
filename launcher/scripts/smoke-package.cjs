@@ -9,7 +9,7 @@ const launcherManifest = JSON.parse(
   fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8"),
 );
 const expectedVersion = launcherManifest.version;
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-smoke-"));
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "gpt-web-codex-package-smoke-"));
 const markerPath = path.join(scratch, "ready.json");
 const coreHome = path.join(scratch, "core-home");
 
@@ -60,7 +60,7 @@ try {
     const stage = path.join(scratch, "stage");
     fs.mkdirSync(stage);
     run("ditto", ["-x", "-k", archive, stage]);
-    executable = path.join(stage, "Codex Web GPT.app", "Contents", "MacOS", "Codex Web GPT");
+    executable = path.join(stage, "GPT Web Codex.app", "Contents", "MacOS", "GPT Web Codex");
     command = executable;
     args = ["--launcher-smoke-test"];
   } else if (process.platform === "linux") {

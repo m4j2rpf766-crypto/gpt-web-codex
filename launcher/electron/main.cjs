@@ -18,7 +18,7 @@ const {
 } = require("electron");
 const { BrowserHost } = require("./browser-host.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
-const { getAutostart, setAutostart } = require("./autostart.cjs");
+const { disableLegacyAutostart } = require("./autostart.cjs");
 const {
   createLogger,
   installProcessDiagnosticGuards,
@@ -65,12 +65,19 @@ const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, X_URL, CONNECTORS_URL, TUNNEL
 const PACKAGED_RENDERER_URL = pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).href;
 const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
-app.setName("Codex Web GPT");
+const PRODUCT_NAME = "GPT Web Codex";
+const LEGACY_PRODUCT_NAME = "Codex Web GPT";
+
+app.setName(PRODUCT_NAME);
 if (process.platform === "win32") app.setAppUserModelId("dev.codexwebgpt.launcher");
 const configuredUserData = process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR?.trim();
-const launcherUserData = configuredUserData
-  ? resolveUserPath(configuredUserData)
-  : path.join(app.getPath("appData"), "Codex Web GPT");
+const appDataRoot = app.getPath("appData");
+const preferredUserData = path.join(appDataRoot, PRODUCT_NAME);
+const legacyUserData = path.join(appDataRoot, LEGACY_PRODUCT_NAME);
+if (!configuredUserData && !fs.existsSync(preferredUserData) && fs.existsSync(legacyUserData)) {
+  fs.renameSync(legacyUserData, preferredUserData);
+}
+const launcherUserData = configuredUserData ? resolveUserPath(configuredUserData) : preferredUserData;
 fs.mkdirSync(launcherUserData, { recursive: true, mode: 0o700 });
 if (process.platform !== "win32") fs.chmodSync(launcherUserData, 0o700);
 app.setPath("userData", launcherUserData);
@@ -116,27 +123,6 @@ function publishOperation(operation) {
   send("launcher:operation", operation);
 }
 
-async function restoreCodexRouteAfterRuntimeFailure({ logger, stateStore }) {
-  try {
-    const route = await runtimeHost.restoreBridgeRoute("runtime-start-fail-safe");
-    if (!route.installed || route.active) return { restored: false };
-    const state = stateStore.update({
-      bridgeEnabled: false,
-      codexCatalogVerified: false,
-      codexRestartRequired: false,
-    });
-    send("launcher:state-changed", state);
-    logger.warn("bridge.route_restored_after_runtime_failure", {
-      changed: route.changed === true,
-    });
-    return { restored: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error("bridge.route_restore_after_runtime_failure_failed", { message });
-    return { restored: false, error: message };
-  }
-}
-
 function trayImage() {
   if (process.platform !== "darwin") {
     return nativeImage.createFromPath(APP_ICON_PATH).resize({ width: 18, height: 18 });
@@ -150,9 +136,9 @@ function trayImage() {
 function createTray(logger) {
   try {
     tray = new Tray(trayImage());
-    tray.setToolTip("Codex Web GPT");
+    tray.setToolTip(PRODUCT_NAME);
     tray.setContextMenu(Menu.buildFromTemplate([
-      { label: "Open Codex Web GPT", click: () => showMainWindow() },
+      { label: `Open ${PRODUCT_NAME}`, click: () => showMainWindow() },
       { type: "separator" },
       { label: "Quit", click: () => { void requestQuit(); } },
     ]));
@@ -218,7 +204,7 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
       : {}),
     minWidth: MIN_WINDOW_BOUNDS.width,
     minHeight: MIN_WINDOW_BOUNDS.height,
-    title: "Codex Web GPT",
+    title: PRODUCT_NAME,
     icon: APP_ICON_PATH,
     show: false,
     backgroundColor: isMac ? "#00000000" : "#181818",
@@ -342,7 +328,6 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:complete-onboarding", (_event, language) => {
     const current = stateStore.read();
     if (!current.githubOpened || !current.xOpened) throw new Error("Open the GitHub and X pages before continuing");
-    if (current.autoStart) setAutostart(app, true);
     const next = stateStore.update({ language: validateLanguage(language), onboardingComplete: true });
     logger.info("launcher.onboarding_completed", { language: next.language });
     return next;
@@ -422,51 +407,6 @@ function registerIpc({ logger, stateStore }) {
   });
 
   handle("launcher:doctor", () => runtimeHost.doctor());
-  handle("launcher:cancel-turns", () => runtimeHost.cancelBrowserTurns());
-  handle("launcher:bridge-enabled", async (_event, enabled) => {
-    const result = await runtimeHost.setBridgeEnabled(enabled === true);
-    const state = stateStore.update({
-      bridgeEnabled: result.active,
-      codexRestartRequired: false,
-    });
-    send("launcher:state-changed", state);
-    return state;
-  });
-  handle("launcher:uninstall-integration", async () => {
-    const language = stateStore.read().language;
-    const chinese = language === "zh-CN";
-    const confirmation = await dialog.showMessageBox(mainWindow, {
-      type: "warning",
-      buttons: chinese ? ["取消", "移除"] : ["Cancel", "Remove"],
-      defaultId: 0,
-      cancelId: 0,
-      title: chinese ? "移除 Codex Web GPT" : "Remove Codex Web GPT",
-      message: chinese
-        ? "移除 WebGPT Luna 的独立本地运行时？"
-        : "Remove the standalone WebGPT Luna runtime?",
-      detail: chinese
-        ? "启动器中的 ChatGPT 登录 profile 会保留。Codex 配置不会被修改。"
-        : "The launcher's ChatGPT login profile is preserved. Codex configuration is not modified.",
-      noLink: true,
-    });
-    if (confirmation.response !== 1) return { cancelled: true };
-    try {
-      await runtimeHost.uninstallIntegration();
-    } finally {
-      browserHost.writeDescriptor();
-    }
-    const state = stateStore.update({
-      coreSetupComplete: false,
-      bridgeEnabled: false,
-      codexCatalogVerified: false,
-      mcpSetupComplete: false,
-      mcpRuntimeInstalled: false,
-      mcpGuideStep: 0,
-      codexRestartRequired: false,
-    });
-    send("launcher:state-changed", state);
-    return { cancelled: false, state };
-  });
   handle("launcher:setup-core", async () => {
     const browser = await browserHost.probeAuthentication();
     if (!browser.authenticated) throw new Error("Sign in to ChatGPT before preparing the standalone runtime");
@@ -477,10 +417,7 @@ function registerIpc({ logger, stateStore }) {
     }
     const result = await runtimeHost.setupCore();
     stateStore.update({
-      bridgeEnabled: false,
       coreSetupComplete: true,
-      codexCatalogVerified: true,
-      codexRestartRequired: false,
       ...(result.mode === "full" ? {
         mcpRuntimeInstalled: true,
         mcpSetupComplete: false,
@@ -509,7 +446,6 @@ function registerIpc({ logger, stateStore }) {
       mcpRuntimeInstalled: true,
       mcpSetupComplete: false,
       mcpGuideStep: 2,
-      codexRestartRequired: false,
     });
     return { ok: true, stdout: result.stdout };
   });
@@ -518,16 +454,8 @@ function registerIpc({ logger, stateStore }) {
     return stateStore.update({ mcpGuideStep: step });
   });
 
-  handle("launcher:autostart", (_event, enabled) => {
-    const desired = enabled === true;
-    const autostart = setAutostart(app, desired);
-    return {
-      state: stateStore.update({ autoStart: desired }),
-      ...autostart,
-    };
-  });
   handle("launcher:set-preference", (_event, key, value) => {
-    if (key !== "keepRunningOnClose" && key !== "showBrowserDuringTurns") {
+    if (key !== "keepRunningOnClose") {
       throw new Error("Unknown preference");
     }
     return stateStore.update({ [key]: value === true });
@@ -570,7 +498,7 @@ async function requestQuit() {
   try {
     const activeOperation = runtimeHost?.currentOperation() || browserHost?.currentOperation();
     if (activeOperation) {
-      throw new Error(`Wait for ${activeOperation} to finish before quitting Codex Web GPT`);
+      throw new Error(`Wait for ${activeOperation} to finish before quitting ${PRODUCT_NAME}`);
     }
     await runtimeSupervisor?.shutdown();
     quitting = true;
@@ -593,7 +521,7 @@ async function requestQuit() {
 
 async function start() {
   cdpPort = await findFreePort();
-  if (process.platform === "linux") app.commandLine.appendSwitch("class", "codex-web-gpt");
+  if (process.platform === "linux") app.commandLine.appendSwitch("class", "gpt-web-codex");
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
   app.commandLine.appendSwitch("remote-debugging-port", String(cdpPort));
 
@@ -624,18 +552,9 @@ async function start() {
   if (stateStore.read().sessionRefreshReminderAt === null) {
     stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
   }
-  const persistedState = stateStore.read();
-  if (persistedState.coreSetupComplete === true && persistedState.codexCatalogVerified === undefined) {
-    stateStore.update({
-      coreSetupComplete: false,
-      codexCatalogVerified: false,
-      codexRestartRequired: false,
-    });
-  }
-  const autostart = getAutostart(app);
-  if (stateStore.read().onboardingComplete && autostart.supported && stateStore.read().autoStart !== autostart.enabled) {
-    setAutostart(app, stateStore.read().autoStart);
-  }
+  // Autostart belonged to the retired Codex routing bridge. Remove any legacy
+  // registration once, without exposing a replacement preference.
+  disableLegacyAutostart(app);
   const logger = createLogger({
     filePath: path.join(app.getPath("logs"), "launcher.jsonl"),
     publish: (record) => send("launcher:log", record),
@@ -755,10 +674,7 @@ async function start() {
     const upgrade = await runtimeHost.upgradeManagedRuntime();
     if (upgrade.updated) {
       const state = stateStore.update({
-        bridgeEnabled: false,
         coreSetupComplete: true,
-        codexCatalogVerified: true,
-        codexRestartRequired: false,
         ...(upgrade.mode === "full" ? {
           mcpRuntimeInstalled: true,
           mcpSetupComplete: false,
@@ -774,30 +690,11 @@ async function start() {
         fromVersion: upgrade.fromVersion,
         toVersion: upgrade.toVersion,
         mode: upgrade.mode,
-        bridgeEnabled: upgrade.bridgeEnabled,
         connectorMigrated: upgrade.connectorMigrated,
       });
     }
-    try {
-      const route = await runtimeHost.bridgeStatus();
-      if (route.installed) {
-        const current = stateStore.read();
-        if (current.bridgeEnabled !== route.active) {
-          const state = stateStore.update({ bridgeEnabled: route.active });
-          send("launcher:state-changed", state);
-        }
-        if (!route.active) return { status: "bridge-disabled" };
-      }
-    } catch (error) {
-      logger.warn("bridge.route_status_failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
     return runtimeSupervisor.startIfConfigured();
-  })().then(async (runtime) => {
-    if (runtime.status === "bridge-disabled") {
-      return;
-    }
+  })().then((runtime) => {
     if (runtime.status === "ready") {
       const config = runtimeSupervisor.readConfig();
       const current = stateStore.read();
@@ -815,56 +712,36 @@ async function start() {
       return;
     }
     if (runtime.status === "not-configured") {
-      const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
       const current = stateStore.read();
       if (current.coreSetupComplete || current.mcpRuntimeInstalled || current.mcpSetupComplete) {
         const state = stateStore.update({
           coreSetupComplete: false,
-          codexCatalogVerified: false,
           mcpRuntimeInstalled: false,
           mcpSetupComplete: false,
           mcpGuideStep: 0,
         });
         send("launcher:state-changed", state);
       }
-      if (routeRecovery.error) {
-        publishOperation({
-          name: "runtime-start",
-          status: "failed",
-          message: `Local runtime is not configured; restoring the previous Codex route also failed: ${routeRecovery.error}`,
-        });
-      }
       return;
     }
-    const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
-    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false });
+    const state = stateStore.update({ coreSetupComplete: false });
     send("launcher:state-changed", state);
     if (runtime.status === "external" || runtime.status === "needs-setup") {
       const detail = runtime.detail || (
         runtime.status === "external"
-          ? "Another process owns the configured Codex Web GPT runtime"
+          ? `Another process owns the configured ${PRODUCT_NAME} runtime`
           : "The installed runtime configuration must be repaired from Setup"
       );
       publishOperation({
         name: "runtime-start",
         status: "failed",
-        message: routeRecovery.error
-          ? `${detail}; restoring the previous Codex route also failed: ${routeRecovery.error}`
-          : routeRecovery.restored
-            ? `${detail}; the previous Codex route was restored, restart Codex once`
-            : detail,
+        message: detail,
       });
     }
-  }).catch(async (error) => {
-    const primary = error instanceof Error ? error.message : String(error);
-    const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
-    const message = routeRecovery.error
-      ? `${primary}; restoring the previous Codex route also failed: ${routeRecovery.error}`
-      : routeRecovery.restored
-        ? `${primary}; the previous Codex route was restored, restart Codex once`
-        : primary;
+  }).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
     logger.error("runtime.startup_failed", { message });
-    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false });
+    const state = stateStore.update({ coreSetupComplete: false });
     send("launcher:state-changed", state);
     publishOperation({ name: "runtime-start", status: "failed", message });
   });
@@ -885,7 +762,7 @@ void start().catch((error) => {
     fs.appendFileSync(path.join(app.getPath("logs"), "launcher-fatal.log"), `${new Date().toISOString()} ${error?.stack || error}\n`);
   } catch {}
   try {
-    dialog.showErrorBox("Codex Web GPT could not start", message);
+    dialog.showErrorBox(`${PRODUCT_NAME} could not start`, message);
   } catch {}
   app.exit(1);
 });

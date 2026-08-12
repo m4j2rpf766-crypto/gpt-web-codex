@@ -2,7 +2,7 @@
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { timingSafeEqual } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { stdin, stdout } from "node:process";
 import { checkBrowserEngine, loginToChatGpt } from "./browser-login";
@@ -11,34 +11,26 @@ import { inspectLauncherBrowserHost, readLauncherBrowserHostDescriptor } from ".
 import { formatDoctorReport, runDoctor } from "./doctor";
 import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { runCommand } from "./process";
-import { startServer } from "./server";
-import { assertServiceIdle, cancelBrowserTurns, getServiceStatus, installService, restartService, startService, stopService, uninstallService } from "./service";
 import { existingFullSetupCredentials, setup, type SetupOptions } from "./setup";
-import { installRuntimeKeyBytes, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
-import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
+import { managedRuntimeKeyPath } from "./tunnel";
 import { VERSION } from "./version";
 
-const HELP = `codex-chatgpt-web ${VERSION}
+const HELP = `gpt-web-codex ${VERSION}
 
-Focused ChatGPT web-backed models for the native Codex harness.
+ChatGPT Web planning with standalone Luna execution and local MCP tools.
 
 Usage:
-  codex-chatgpt-web setup --browser-only [options]
-  codex-chatgpt-web setup --full --tunnel-id ID --runtime-key-file PATH [options]
-  codex-chatgpt-web login
-  codex-chatgpt-web doctor [--json]
-  codex-chatgpt-web browser check
-  codex-chatgpt-web serve
-  codex-chatgpt-web mcp [--state-path PATH]
-  codex-chatgpt-web service <status|install|start|restart|stop|cancel-turns>
-  codex-chatgpt-web tunnel <status|start|restart|stop|key-import>
-  codex-chatgpt-web open <tunnels|runtime-keys|connectors>
-  codex-chatgpt-web uninstall --yes
+  gpt-web-codex setup --browser-only [options]
+  gpt-web-codex setup --full --tunnel-id ID --runtime-key-file PATH [options]
+  gpt-web-codex login
+  gpt-web-codex doctor [--json]
+  gpt-web-codex browser check
+  gpt-web-codex mcp [--state-path PATH]
+  gpt-web-codex open <tunnels|runtime-keys|connectors>
 
 Setup options:
-  --browser-only               Account-eligible Web models, full context/images, no local tools or tunnel
-  --full                       Account-eligible Web models with tools; Pro remains read-only
-  --port NUMBER                Loopback Responses port (default: 17841)
+  --browser-only               Prepare the launcher-owned ChatGPT browser
+  --full                       Add the standalone Luna MCP runtime and tunnel
   --chrome PATH                Google Chrome/Chromium executable used for account login
   --browser-host-descriptor PATH
                                Use the embedded launcher browser described by this owner-only file
@@ -47,13 +39,12 @@ Setup options:
   --app-name NAME              ChatGPT connector name (default: ${CHATGPT_CONNECTOR_NAME})
   --tunnel-id ID               Existing OpenAI tunnel id (full mode)
   --runtime-key-file PATH      File containing a Tunnels Read+Use runtime key
-  --restart-service            Explicitly restart this project's daemon after an update
   --login                      Refresh the stored ChatGPT login even if one exists
   --auto-approve-tool-calls    Opt in to per-call browser clicks on "Allow once" prompts
   --acknowledge-unofficial     Accept the one-time unofficial-browser-automation notice
 
 Global:
-  --home PATH                  Override ~/.codex-chatgpt-web
+  --home PATH                  Override the local runtime data directory
   -h, --help
   -v, --version
 `;
@@ -129,7 +120,7 @@ async function loginCommand(args: string[]): Promise<void> {
     assertNoArgs(args);
     const config = loadConfig();
     if (config.browserHost === "launcher") {
-      throw new Error("ChatGPT login is owned by the launcher; open Codex Web GPT and use its Sign in step");
+      throw new Error("ChatGPT login is owned by the launcher; open GPT Web Codex and use its Sign in step");
     }
     const result = await loginToChatGpt(config);
     stdout.write(`ChatGPT login stored at ${result.storageStatePath}\n`);
@@ -158,11 +149,9 @@ async function setupCommand(args: string[]): Promise<void> {
   const browserOnly = takeFlag(args, "--browser-only");
   const full = takeFlag(args, "--full");
   if (browserOnly === full) throw new Error("Choose exactly one setup mode: --browser-only or --full");
-  const portRaw = takeOption(args, "--port");
   let acknowledged = takeFlag(args, "--acknowledge-unofficial");
   const options: SetupOptions = {
     mode: full ? "full" : "browser-only",
-    ...(portRaw ? { port: Number(portRaw) } : {}),
   };
   const appName = takeOption(args, "--app-name");
   const tunnelId = takeOption(args, "--tunnel-id");
@@ -177,7 +166,7 @@ async function setupCommand(args: string[]): Promise<void> {
   if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
   options.forceLogin = takeFlag(args, "--login");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
-  options.restartService = takeFlag(args, "--restart-service");
+  options.replaceLegacyRuntime = takeFlag(args, "--replace-legacy-runtime");
   assertNoArgs(args);
 
   if (!acknowledged) {
@@ -214,7 +203,7 @@ async function setupCommand(args: string[]): Promise<void> {
     stdout.write("One account-level step remains: attach the tunnel to the ChatGPT connector named in config.\n");
     stdout.write("Open: https://chatgpt.com/#settings/Plugins\n");
   }
-  stdout.write("Restart the Codex app once so its native model catalog refreshes through the installed route.\n");
+  stdout.write("Standalone runtime ready. Codex configuration and routing were not changed.\n");
 }
 
 async function doctorCommand(args: string[]): Promise<void> {
@@ -223,60 +212,6 @@ async function doctorCommand(args: string[]): Promise<void> {
   const report = await runDoctor();
   stdout.write(json ? `${JSON.stringify(report, null, 2)}\n` : formatDoctorReport(report));
   if (!report.ok) process.exitCode = 1;
-}
-
-async function routeCommand(args: string[]): Promise<void> {
-  assertNoArgs(args);
-  throw new Error("Codex routing is intentionally unsupported: standalone WebGPT Luna never reads or modifies Codex routing configuration");
-}
-
-async function serviceCommand(args: string[]): Promise<void> {
-  const action = args.shift() ?? "status";
-  assertNoArgs(args);
-  const config = action === "status" ? undefined : loadConfig();
-  if (action === "cancel-turns") {
-    const cancelled = await cancelBrowserTurns(config!);
-    stdout.write(`${JSON.stringify({ cancelledBrowserTurns: cancelled }, null, 2)}\n`);
-    return;
-  }
-  const status = action === "status" ? getServiceStatus()
-    : action === "install" ? installService(config!)
-      : action === "start" ? startService()
-        : action === "restart" ? await restartService(config!)
-          : action === "stop" ? await stopService(config!)
-            : undefined;
-  if (!status) throw new Error(`Unknown service action: ${action}`);
-  stdout.write(`${JSON.stringify(status, null, 2)}\n`);
-}
-
-async function tunnelCommand(args: string[]): Promise<void> {
-  const action = args.shift() ?? "status";
-  assertNoArgs(args);
-  if (action === "key-import") {
-    const key = await secretPrompt("Runtime key (hidden): ");
-    if (!key) throw new Error("A non-empty runtime key is required");
-    installRuntimeKeyBytes(key);
-    stdout.write(`Runtime key stored privately at ${managedRuntimeKeyPath()}\n`);
-    return;
-  }
-  const config = loadConfig();
-  if (action === "start") startTunnelService();
-  else if (action === "restart") {
-    await assertServiceIdle(config);
-    await restartTunnelService();
-  }
-  else if (action === "stop") {
-    await assertServiceIdle(config);
-    await stopTunnelService();
-    stopTunnel(config);
-  }
-  else if (action !== "status") throw new Error(`Unknown tunnel action: ${action}`);
-  const status = action === "start" || action === "restart"
-    ? await waitForTunnelReady(config)
-    : tunnelStatus(config);
-  const service = getTunnelServiceStatus();
-  stdout.write(`${JSON.stringify({ service, runtime: status }, null, 2)}\n`);
-  if (action !== "stop" && (!service.running || !status.ok)) process.exitCode = 1;
 }
 
 async function openCommand(args: string[]): Promise<void> {
@@ -297,35 +232,6 @@ async function openCommand(args: string[]): Promise<void> {
   }
 }
 
-async function uninstallCommand(args: string[]): Promise<void> {
-  const yes = takeFlag(args, "--yes");
-  const keepData = takeFlag(args, "--keep-data");
-  const launcherControl = takeFlag(args, "--launcher-control");
-  assertNoArgs(args);
-  if (launcherControl) authorizeLauncherControl("uninstall");
-  if (!yes && !await confirm("Restore Codex config, stop services, and remove this installation?")) {
-    throw new Error("Uninstall cancelled");
-  }
-  const config = existsSync(getConfigPath()) ? loadConfig() : undefined;
-  if (config?.browserHost === "launcher" && !launcherControl) {
-    throw new Error(
-      "Launcher-owned integration must be removed from Codex Web GPT Settings so the active runtime can be drained safely.",
-    );
-  }
-  if (!config && process.platform === "darwin" && getServiceStatus().installed) {
-    throw new Error("Service exists but configuration is missing; refusing an unverifiable uninstall");
-  }
-  const launcherRuntimeStopped = config?.browserHost === "launcher" && launcherControl;
-  if (config && process.platform === "darwin" && !launcherRuntimeStopped) await assertServiceIdle(config);
-  if (config?.mode === "full" && !launcherRuntimeStopped) {
-    if (process.platform === "darwin") await uninstallTunnelService();
-    stopTunnel(config);
-  }
-  if (config && process.platform === "darwin" && !launcherRuntimeStopped) await uninstallService(config);
-  if (!keepData) rmSync(getConfigDir(), { recursive: true, force: true });
-  stdout.write(keepData ? "Uninstalled; private application data was preserved.\n" : "Uninstalled and removed private application data.\n");
-}
-
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const home = takeOption(args, "--home");
@@ -343,7 +249,6 @@ async function main(): Promise<void> {
   else if (command === "setup") await setupCommand(args);
   else if (command === "login") await loginCommand(args);
   else if (command === "doctor" || command === "status") await doctorCommand(args);
-  else if (command === "route") await routeCommand(args);
   else if (command === "browser") {
     const action = args.shift();
     assertNoArgs(args);
@@ -356,21 +261,12 @@ async function main(): Promise<void> {
       await checkBrowserEngine(config);
       stdout.write("Playwright can launch the configured Chrome executable.\n");
     }
-  } else if (command === "serve") {
-    assertNoArgs(args);
-    const config = loadConfig();
-    const server = startServer(config);
-    stdout.write(`codex-chatgpt-web ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
-    await new Promise<void>(() => {});
   } else if (command === "mcp") await runChatGptMcpMain(args);
-  else if (command === "service") await serviceCommand(args);
-  else if (command === "tunnel") await tunnelCommand(args);
   else if (command === "open") await openCommand(args);
-  else if (command === "uninstall") await uninstallCommand(args);
   else throw new Error(`Unknown command: ${command}\n\n${HELP}`);
 }
 
 main().catch(error => {
-  process.stderr.write(`codex-chatgpt-web: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`gpt-web-codex: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 });

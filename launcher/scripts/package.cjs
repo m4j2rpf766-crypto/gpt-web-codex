@@ -37,7 +37,7 @@ if (target === "--mac" && !env.CSC_LINK && !env.CSC_NAME) {
   builderArgs.push("--config.mac.identity=-");
 }
 
-const staging = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-"));
+const staging = fs.mkdtempSync(path.join(os.tmpdir(), "gpt-web-codex-package-"));
 const artifactsDirectory = path.join(root, "artifacts");
 try {
   const result = spawnSync(executable, [

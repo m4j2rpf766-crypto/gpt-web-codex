@@ -1,8 +1,8 @@
 {
-  "name": "codex-web-gpt-launcher",
+  "name": "gpt-web-codex-launcher",
   "version": "2.1.8",
   "private": true,
-  "description": "Desktop control center for Codex ChatGPT Web",
+  "description": "Desktop control center for ChatGPT Web planning and standalone Luna execution",
   "author": "miuuyy",
   "type": "module",
   "main": "electron/main.cjs",
@@ -37,8 +37,8 @@
   },
   "build": {
     "appId": "dev.codexwebgpt.launcher",
-    "productName": "Codex Web GPT",
-    "artifactName": "codex-web-gpt-${version}-${os}-${arch}.${ext}",
+    "productName": "GPT Web Codex",
+    "artifactName": "gpt-web-codex-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "directories": {
       "output": "release"

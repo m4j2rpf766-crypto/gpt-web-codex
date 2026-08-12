@@ -281,13 +281,13 @@ export function defaultChromeExecutable(
 
 export function loadConfig(): AppConfig {
   const path = getConfigPath();
-  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
+  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run gpt-web-codex setup first.`);
   return parseConfig(JSON.parse(readFileSync(path, "utf8")), path);
 }
 
 export function loadConfigForSetup(): AppConfig {
   const path = getConfigPath();
-  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
+  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run gpt-web-codex setup first.`);
   const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   if (raw.version === 1 && raw.mode === "pro-only") {
     raw.version = 2;

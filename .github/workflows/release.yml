@@ -50,7 +50,7 @@ jobs:
           test -n "$archive"
           stage="$(mktemp -d)"
           ditto -x -k "$archive" "$stage"
-          codesign --verify --deep --strict --verbose=2 "$stage/Codex Web GPT.app"
+          codesign --verify --deep --strict --verbose=2 "$stage/GPT Web Codex.app"
       - name: Archive runtime
         if: runner.os != 'Windows'
         run: tar -czf "${{ matrix.runtime_asset }}" -C launcher/build/runtime .
@@ -97,7 +97,7 @@ jobs:
           cp scripts/install.sh release-assets/install.sh
           cp scripts/install-launcher.sh release-assets/install-launcher.sh
           cp scripts/install-launcher.ps1 release-assets/install-launcher.ps1
-          cp assets/demo.gif "release-assets/codex-web-gpt-${GITHUB_REF_NAME#v}-demo.gif"
+          cp assets/demo.gif "release-assets/gpt-web-codex-${GITHUB_REF_NAME#v}-demo.gif"
       - name: Flatten release assets
         run: |
           cd release-assets

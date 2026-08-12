@@ -7,19 +7,14 @@ export interface LauncherState {
   onboardingComplete: boolean;
   githubOpened: boolean;
   xOpened: boolean;
-  autoStart: boolean;
-  bridgeEnabled: boolean;
   keepRunningOnClose: boolean;
-  showBrowserDuringTurns: boolean;
   sidebarOpen: boolean;
   sidebarWidth: number;
   browserSmokePassed?: boolean;
   browserSmokeVersion?: string | null;
   coreSetupComplete?: boolean;
-  codexCatalogVerified?: boolean;
   mcpSetupComplete?: boolean;
   mcpRuntimeInstalled?: boolean;
-  codexRestartRequired?: boolean;
   mcpGuideStep: number;
   sessionRefreshReminderAt: string | null;
 }
@@ -123,9 +118,6 @@ export interface LauncherApi {
   smokeTest(): Promise<{ ok: boolean; effort: string; response: string }>;
   verifyMcp(): Promise<DoctorReport>;
   doctor(): Promise<DoctorReport>;
-  cancelTurns(): Promise<{ stdout: string }>;
-  setBridgeEnabled(enabled: boolean): Promise<LauncherState>;
-  uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCore(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
   setupMcp(input: {
     tunnelId?: string;
@@ -133,8 +125,7 @@ export interface LauncherApi {
     replace?: boolean;
   }): Promise<{ ok: boolean; stdout: string }>;
   setMcpStep(step: number): Promise<LauncherState>;
-  setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
-  setPreference(key: "keepRunningOnClose" | "showBrowserDuringTurns", value: boolean): Promise<LauncherState>;
+  setPreference(key: "keepRunningOnClose", value: boolean): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
   logs(limit?: number): Promise<LogRecord[]>;
   openLogs(): Promise<string>;

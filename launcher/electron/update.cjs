@@ -8,7 +8,7 @@ const { pipeline } = require("node:stream/promises");
 
 const REPOSITORY = "miuuyy/codex-chatgpt-web";
 const RELEASE_API_URL = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
-const USER_AGENT = "codex-web-gpt-launcher-updater";
+const USER_AGENT = "gpt-web-codex-launcher-updater";
 const MAX_REDIRECTS = 5;
 
 function parseVersion(value) {
@@ -43,13 +43,13 @@ function releaseVersion(tagName) {
 
 function releaseAssetName(version, platform = process.platform, arch = process.arch) {
   if (platform === "darwin" && ["arm64", "x64"].includes(arch)) {
-    return `codex-web-gpt-${version}-mac-${arch}.zip`;
+    return `gpt-web-codex-${version}-mac-${arch}.zip`;
   }
   if (platform === "win32" && arch === "x64") {
-    return `codex-web-gpt-${version}-win-x64.exe`;
+    return `gpt-web-codex-${version}-win-x64.exe`;
   }
   if (platform === "linux" && arch === "x64") {
-    return `codex-web-gpt-${version}-linux-x64.AppImage`;
+    return `gpt-web-codex-${version}-linux-x64.AppImage`;
   }
   return null;
 }
@@ -150,7 +150,7 @@ function findMacApplication(root) {
   const appEntry = entries.find((entry) => entry.isDirectory() && entry.name.endsWith(".app"));
   if (!appEntry) throw new Error("The macOS update archive does not contain an application bundle");
   const application = path.join(root, appEntry.name);
-  const executable = path.join(application, "Contents", "MacOS", "Codex Web GPT");
+  const executable = path.join(application, "Contents", "MacOS", "GPT Web Codex");
   if (!fs.existsSync(executable) || !fs.statSync(executable).isFile()) {
     throw new Error("The macOS update archive is incomplete");
   }
@@ -290,7 +290,7 @@ function createUpdateController({
     const available = candidate;
     pending = (async () => {
       transition({ status: "downloading", version: available.version });
-      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-update-"));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "gpt-web-codex-update-"));
       try {
         const checksums = await deps.downloadText(available.checksumsUrl);
         const expected = expectedChecksum(checksums, available.assetName);

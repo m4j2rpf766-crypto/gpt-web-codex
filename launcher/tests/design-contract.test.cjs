@@ -93,7 +93,7 @@ test("closing the launcher follows the persisted background-runtime preference",
     /if \(stateStore\.read\(\)\.keepRunningOnClose && tray\) window\.hide\(\);\s*else void requestQuit\(\);/,
   );
   assert.match(appSource, /setPreference\("keepRunningOnClose", checked\)/);
-  assert.match(i18nSource, /keepRunningOnClose: "Keep server running when window closes"/);
+  assert.match(i18nSource, /keepRunningOnClose: "Keep local tools running when window closes"/);
 });
 
 test("normal launcher shutdown flushes the persistent ChatGPT session before closing its views", () => {
@@ -105,11 +105,20 @@ test("normal launcher shutdown flushes the persistent ChatGPT session before clo
 
 test("settings do not expose a Codex routing switch", () => {
   assert.doesNotMatch(appSource, /body=\{copy\.bridgeRouteBody\} label=\{copy\.bridgeRoute\}/);
-  assert.match(runtimeSource, /Codex routing is disabled by standalone WebGPT Luna/);
+  assert.doesNotMatch(appSource, /launchAtLogin|showDuringTurns|cancelTurns|uninstallIntegration/);
+  assert.doesNotMatch(preloadSource, /launcher:(?:autostart|bridge-enabled|cancel-turns|uninstall-integration)/);
+  assert.doesNotMatch(electronMain, /restoreCodexRoute|setBridgeEnabled|codexCatalogVerified/);
+  assert.doesNotMatch(runtimeSource, /setBridgeEnabled|restoreBridgeRoute|uninstallIntegration/);
   assert.match(styles, /\.action-dot\.is-success\s*\{[^}]*background:\s*var\(--green-300\)/s);
   assert.match(styles, /\.action-dot\.is-error\s*\{[^}]*background:\s*var\(--red-300\)/s);
-  assert.match(electronMain, /runtimeHost\.setBridgeEnabled\(enabled === true\)/);
   assert.doesNotMatch(appSource, /Turning it off restores your previous model route/);
+});
+
+test("visible product identity is GPT Web Codex while legacy data is migrated", () => {
+  assert.match(i18nSource, /product: "GPT Web Codex"/);
+  assert.match(electronMain, /const PRODUCT_NAME = "GPT Web Codex"/);
+  assert.match(electronMain, /fs\.renameSync\(legacyUserData, preferredUserData\)/);
+  assert.match(electronMain, /disableLegacyAutostart\(app\)/);
 });
 
 test("doctor summary never hides failed checks behind trailing healthy checks", () => {

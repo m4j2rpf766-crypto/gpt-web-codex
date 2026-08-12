@@ -62,7 +62,7 @@ export async function runDoctor(): Promise<DoctorReport> {
       checks.push({ id: "chrome", status: "ok", message: `Chrome executable found: ${config.chromeExecutablePath}` });
     }
     if (!browserLoginStateExists(config)) {
-      checks.push({ id: "login", status: "error", message: "ChatGPT login state is missing or unverified; run `codex-chatgpt-web login`" });
+      checks.push({ id: "login", status: "error", message: "ChatGPT login state is missing or unverified; run `gpt-web-codex login`" });
     } else if (!secureFile(config.storageStatePath)) {
       checks.push({ id: "login", status: "error", message: `ChatGPT login state is readable by other users: ${config.storageStatePath}` });
     } else if (!secureFile(loginVerificationMarkerPath(config.storageStatePath))) {

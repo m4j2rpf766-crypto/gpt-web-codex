@@ -1,4 +1,4 @@
-# Standalone WebGPT + Luna requirements
+# GPT Web Codex requirements
 
 This branch turns the upstream browser bridge into a standalone ChatGPT Web application backed by
 local MCP tools and Codex Luna execution. These requirements are the source of truth for the

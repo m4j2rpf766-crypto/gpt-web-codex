@@ -67,7 +67,7 @@ test("core setup preserves an existing full-harness installation", async () => {
     "/runtime/launcher-browser.json",
     "--refresh-account-capabilities",
     "--acknowledge-unofficial",
-    "--restart-service",
+    "--replace-legacy-runtime",
     "--app-name",
     "WebGPT Luna Standalone",
   ]);
@@ -193,14 +193,13 @@ test("launcher update transaction upgrades its owned full runtime with saved con
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
     "--acknowledge-unofficial",
-    "--restart-service",
+    "--replace-legacy-runtime",
     "--app-name",
     "WebGPT Luna Standalone",
   ]);
   assert.deepEqual(result, {
     updated: true,
     mode: "full",
-    bridgeEnabled: false,
     fromVersion: "1.1.1",
     toVersion: "1.1.3",
     connectorMigrated: false,
@@ -225,7 +224,7 @@ test("launcher migrates the cached WebGPT Luna identity even when the release ve
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
     "--acknowledge-unofficial",
-    "--restart-service",
+    "--replace-legacy-runtime",
     "--app-name",
     "WebGPT Luna Standalone",
   ]);
@@ -249,7 +248,6 @@ test("launcher update transaction remains standalone without touching Codex rout
 
   const result = await fixture.host.upgradeManagedRuntime();
 
-  assert.equal(result.bridgeEnabled, false);
   assert.equal(disabled, 0);
 });
 
@@ -294,7 +292,7 @@ test("MCP setup reuses valid private credentials without exposing or rewriting t
       "--app-name",
       "WebGPT Luna Standalone",
       "--acknowledge-unofficial",
-      "--restart-service",
+      "--replace-legacy-runtime",
     ]);
     assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), false);
     assert.equal(fixture.invocation().args.includes("--replace-codex-route"), false);

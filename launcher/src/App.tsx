@@ -1243,8 +1243,6 @@ function SettingsSurface({
 }) {
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [busy, setBusy] = useState(false);
-  const [turnsCancelled, setTurnsCancelled] = useState(false);
-  const [integrationRemoved, setIntegrationRemoved] = useState(false);
 
   const updateLanguage = async (next: Language) => {
     try {
@@ -1263,69 +1261,14 @@ function SettingsSurface({
       setBusy(false);
     }
   };
-  const cancelTurns = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api!.cancelTurns();
-      setTurnsCancelled(true);
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const setBridgeEnabled = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setBridgeEnabled(enabled));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const uninstallIntegration = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await api!.uninstallIntegration();
-      if (!result.cancelled) {
-        updateState(result.state);
-        setIntegrationRemoved(true);
-      }
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <ContentSurface narrow title={copy.settingsTitle}>
       <SectionHeading label={copy.general} />
       <div className="settings-list">
-        <SettingRow body={copy.launchAtLoginBody} label={copy.launchAtLogin}>
-          <Switch
-            checked={snapshot.state.autoStart}
-            onChange={(checked) => void api!.setAutostart(checked)
-              .then((result) => updateState(result.state))
-              .catch((cause) => setError(messageOf(cause)))}
-          />
-        </SettingRow>
         <SettingRow body={copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
           <Switch
             checked={snapshot.state.keepRunningOnClose}
             onChange={(checked) => void api!.setPreference("keepRunningOnClose", checked)
-              .then(updateState)
-              .catch((cause) => setError(messageOf(cause)))}
-          />
-        </SettingRow>
-        <SettingRow body={copy.showDuringTurnsBody} label={copy.showDuringTurns}>
-          <Switch
-            checked={snapshot.state.showBrowserDuringTurns}
-            onChange={(checked) => void api!.setPreference("showBrowserDuringTurns", checked)
               .then(updateState)
               .catch((cause) => setError(messageOf(cause)))}
           />
@@ -1341,22 +1284,6 @@ function SettingsSurface({
         <span>
           <strong>{copy.runDoctor}</strong>
           <small>{doctor ? (doctor.ok ? copy.healthy : copy.needsAttention) : copy.status}</small>
-        </span>
-        <Icon name="chevron" />
-      </button>
-      <button className="diagnostic-row" disabled={busy} onClick={() => void cancelTurns()} type="button">
-        <Icon name="close" />
-        <span>
-          <strong>{copy.cancelTurns}</strong>
-          <small>{turnsCancelled ? copy.turnsCancelled : copy.cancelTurnsBody}</small>
-        </span>
-        <Icon name="chevron" />
-      </button>
-      <button className="diagnostic-row" disabled={busy} onClick={() => void uninstallIntegration()} type="button">
-        <Icon name="close" />
-        <span>
-          <strong>{copy.uninstallIntegration}</strong>
-          <small>{integrationRemoved ? copy.integrationRemoved : copy.uninstallIntegrationBody}</small>
         </span>
         <Icon name="chevron" />
       </button>
@@ -1790,7 +1717,7 @@ function FatalMessage({ message }: { message: string }) {
   return (
     <main className="fatal-message">
       <BrandMark />
-      <h1>Codex Web GPT</h1>
+      <h1>GPT Web Codex</h1>
       <p>{message}</p>
     </main>
   );

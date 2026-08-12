@@ -34,7 +34,7 @@ if (-not $Version) {
   $Version = [string]$Release.tag_name
 }
 if ($Version -and $Version.StartsWith("v")) { $Version = $Version.Substring(1) }
-if (-not $Version) { throw "Could not resolve the latest Codex Web GPT release" }
+if (-not $Version) { throw "Could not resolve the latest GPT Web Codex release" }
 if ($Version -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid release version: $Version" }
 
 if (-not [Environment]::Is64BitOperatingSystem) {
@@ -42,13 +42,13 @@ if (-not [Environment]::Is64BitOperatingSystem) {
 }
 $Arch = "x64"
 
-$Asset = "codex-web-gpt-$Version-win-$Arch.exe"
+$Asset = "gpt-web-codex-$Version-win-$Arch.exe"
 $BaseUrl = "https://github.com/$Repository/releases/download/v$Version"
-$Temp = Join-Path ([System.IO.Path]::GetTempPath()) "codex-web-gpt-$([guid]::NewGuid().ToString('N'))"
+$Temp = Join-Path ([System.IO.Path]::GetTempPath()) "gpt-web-codex-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $Temp | Out-Null
 try {
-  if (Get-Process -Name "Codex Web GPT" -ErrorAction SilentlyContinue) {
-    throw "Quit Codex Web GPT before updating it"
+  if (Get-Process -Name "GPT Web Codex" -ErrorAction SilentlyContinue) {
+    throw "Quit GPT Web Codex before updating it"
   }
   $Installer = Join-Path $Temp $Asset
   $Checksums = Join-Path $Temp "checksums.txt"
@@ -67,7 +67,7 @@ try {
   if ($Actual -ne $Expected) { throw "SHA-256 verification failed for $Asset" }
   $Process = Start-Process -FilePath $Installer -ArgumentList "/S" -Wait -PassThru
   if ($Process.ExitCode -ne 0) { throw "Installer exited with code $($Process.ExitCode)" }
-  $Executable = Join-Path $env:LOCALAPPDATA "Programs\codex-web-gpt-launcher\Codex Web GPT.exe"
+  $Executable = Join-Path $env:LOCALAPPDATA "Programs\gpt-web-codex-launcher\GPT Web Codex.exe"
   if (-not (Test-Path $Executable)) { throw "Installed launcher was not found at $Executable" }
   Start-Process $Executable
   Write-Host "Installed $Executable"

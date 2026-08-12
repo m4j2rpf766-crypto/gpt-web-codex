@@ -1,5 +1,5 @@
 {
-  "name": "codex-chatgpt-web",
+  "name": "gpt-web-codex",
   "version": "2.1.8",
   "private": true,
   "description": "A standalone ChatGPT Web planner with Luna execution and direct local MCP tools.",
@@ -14,7 +14,7 @@
   "packageManager": "bun@1.3.14",
   "type": "module",
   "bin": {
-    "codex-chatgpt-web": "./src/cli.ts"
+    "gpt-web-codex": "./src/cli.ts"
   },
   "files": [
     "dist",
@@ -23,7 +23,7 @@
     "LICENSES"
   ],
   "scripts": {
-    "start": "bun run src/cli.ts serve",
+    "start": "bun run scripts/start-launcher.ts",
     "setup": "bun run src/cli.ts setup",
     "doctor": "bun run src/cli.ts doctor",
     "test": "bun test tests/*.test.ts",
@@ -34,7 +34,6 @@
     "clean": "bun run scripts/clean.ts",
     "build": "bun run scripts/build-runtime-bundle.ts",
     "smoke": "bun run scripts/smoke-release.ts dist/runtime",
-    "smoke:codex": "bun run scripts/smoke-codex-catalog.ts",
     "launcher": "bun run scripts/start-launcher.ts",
     "app": "bun run scripts/start-launcher.ts",
     "app:package": "bun run --cwd launcher package",

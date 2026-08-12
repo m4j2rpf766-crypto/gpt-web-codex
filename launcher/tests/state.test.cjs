@@ -10,7 +10,7 @@ const {
   validateSidebarState,
 } = require("../electron/state.cjs");
 
-test("launcher state persists onboarding, language, and autostart atomically", () => {
+test("launcher state persists standalone preferences atomically", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-launcher-state-"));
   const file = path.join(root, "state.json");
   try {
@@ -21,10 +21,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       onboardingComplete: false,
       githubOpened: false,
       xOpened: false,
-      autoStart: true,
-      bridgeEnabled: false,
       keepRunningOnClose: true,
-      showBrowserDuringTurns: true,
       browserSmokePassed: false,
       browserSmokeVersion: null,
       sidebarOpen: true,
@@ -45,10 +42,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       onboardingComplete: true,
       githubOpened: false,
       xOpened: false,
-      autoStart: true,
-      bridgeEnabled: false,
       keepRunningOnClose: false,
-      showBrowserDuringTurns: true,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
       sidebarOpen: true,
@@ -81,7 +75,9 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       version: 1,
       language: "zh-CN",
       onboardingComplete: "yes",
-      autoStart: "yes",
+      autoStart: true,
+      bridgeEnabled: true,
+      showBrowserDuringTurns: true,
       browserSmokePassed: "yes",
       browserSmokeVersion: { invalid: true },
       sidebarOpen: "yes",
@@ -96,10 +92,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       onboardingComplete: false,
       githubOpened: false,
       xOpened: false,
-      autoStart: true,
-      bridgeEnabled: false,
       keepRunningOnClose: true,
-      showBrowserDuringTurns: true,
       browserSmokePassed: false,
       browserSmokeVersion: null,
       sidebarOpen: true,

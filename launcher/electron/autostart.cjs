@@ -1,8 +1,6 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { writePrivateFileAtomic } = require("./atomic-file.cjs");
-
 const LINUX_DESKTOP_NAME = "dev.codexwebgpt.launcher.desktop";
 
 function linuxDesktopPath() {
@@ -10,96 +8,25 @@ function linuxDesktopPath() {
   return path.join(configHome, "autostart", LINUX_DESKTOP_NAME);
 }
 
-function desktopExecArgument(value) {
-  return `"${String(value)
-    .replaceAll("%", "%%")
-    .replace(/["`$\\]/g, "\\$&")}"`;
-}
-
-function linuxExecutable(app) {
-  const stableLauncher = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE?.trim();
-  if (stableLauncher && path.isAbsolute(stableLauncher)) return stableLauncher;
-  const appImage = process.env.CODEX_WEB_GPT_APPIMAGE?.trim() || process.env.APPIMAGE?.trim();
-  if (appImage && path.isAbsolute(appImage)) return appImage;
-  return app.getPath("exe");
-}
-
-function linuxDesktopEntry(app, executable = linuxExecutable(app)) {
-  return `[Desktop Entry]
-Type=Application
-Version=1.0
-Name=Codex Web GPT
-Comment=Start the Codex Web GPT launcher in the background
-Exec=/usr/bin/env APPIMAGE_EXTRACT_AND_RUN=1 CODEX_WEB_GPT_APPIMAGE=${desktopExecArgument(executable)} ${desktopExecArgument(executable)} --hidden
-Terminal=false
-X-GNOME-Autostart-enabled=true
-`;
-}
-
-function linuxAutostartMatches(app) {
-  const target = linuxDesktopPath();
-  try {
-    return fs.readFileSync(target, "utf8") === linuxDesktopEntry(app);
-  } catch {
-    return false;
-  }
-}
-
-function requireAutostartState(result, desired) {
-  if (result.supported && result.enabled !== Boolean(desired)) {
-    throw new Error(`The operating system did not ${desired ? "enable" : "disable"} launcher autostart`);
-  }
-  return result;
-}
-
-function setAutostart(app, enabled) {
-  if (!app.isPackaged) return { supported: false, enabled: Boolean(enabled) };
+function disableLegacyAutostart(app) {
+  if (!app.isPackaged) return { supported: false, disabled: false };
   if (process.platform === "linux") {
-    const target = linuxDesktopPath();
-    if (enabled) {
-      writePrivateFileAtomic(target, linuxDesktopEntry(app));
-    } else {
-      fs.rmSync(target, { force: true });
-    }
-    return requireAutostartState({
-      supported: true,
-      enabled: enabled ? linuxAutostartMatches(app) : false,
-    }, enabled);
+    fs.rmSync(linuxDesktopPath(), { force: true });
+    return { supported: true, disabled: true };
   }
   if (process.platform === "darwin" || process.platform === "win32") {
     app.setLoginItemSettings({
-      openAtLogin: Boolean(enabled),
-      openAsHidden: Boolean(enabled),
+      openAtLogin: false,
+      openAsHidden: false,
       args: ["--hidden"],
     });
-    return requireAutostartState({
-      supported: true,
-      enabled: app.getLoginItemSettings({ args: ["--hidden"] }).openAtLogin === true,
-    }, enabled);
+    return { supported: true, disabled: true };
   }
-  return { supported: false, enabled: false };
-}
-
-function getAutostart(app) {
-  if (!app.isPackaged) return { supported: false, enabled: false };
-  if (process.platform === "linux") {
-    return { supported: true, enabled: linuxAutostartMatches(app) };
-  }
-  if (process.platform === "darwin" || process.platform === "win32") {
-    return {
-      supported: true,
-      enabled: app.getLoginItemSettings({ args: ["--hidden"] }).openAtLogin === true,
-    };
-  }
-  return { supported: false, enabled: false };
+  return { supported: false, disabled: false };
 }
 
 module.exports = {
   LINUX_DESKTOP_NAME,
-  getAutostart,
-  linuxAutostartMatches,
-  linuxDesktopEntry,
+  disableLegacyAutostart,
   linuxDesktopPath,
-  requireAutostartState,
-  setAutostart,
 };
