@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCodexInvocation } from "../src/standalone/codex-command";
 import { DirectToolService, resolveScopedPath } from "../src/standalone/direct-tools";
+import { IMAGE_PREVIEW_RESOURCE_URI } from "../src/standalone/image-preview";
 import { LunaJobManager } from "../src/standalone/luna-jobs";
 import { LunaStateStore } from "../src/standalone/state-store";
 import type { LunaJob } from "../src/standalone/types";
@@ -306,6 +307,14 @@ test("standalone MCP file_read transmits an image content block without base64 d
   const client = new Client({ name: "webgpt-image-test", version: "1.0.0" });
   try {
     await client.connect(transport);
+    const tools = await client.listTools();
+    expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
+    const resources = await client.listResources();
+    expect(resources.resources.some(resource => resource.uri === IMAGE_PREVIEW_RESOURCE_URI)).toBe(true);
+    const preview = await client.readResource({ uri: IMAGE_PREVIEW_RESOURCE_URI });
+    expect(preview.contents[0]?.mimeType).toBe("text/html+skybridge");
+    const previewContent = preview.contents[0];
+    expect(previewContent && "text" in previewContent ? previewContent.text : "").toContain("webgpt_image_preview");
     const output = await client.callTool({
       name: "file_read",
       arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
@@ -315,6 +324,13 @@ test("standalone MCP file_read transmits an image content block without base64 d
       { type: "image", data: image.toString("base64"), mimeType: "image/png" },
     ]);
     expect(JSON.stringify(output.structuredContent)).not.toContain(image.toString("base64"));
+    expect(output._meta?.webgpt_image_preview).toEqual({
+      name: "pixel.png",
+      mime_type: "image/png",
+      bytes: image.length,
+      data_url: `data:image/png;base64,${image.toString("base64")}`,
+    });
+    expect(output._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
   } finally {
     await client.close();
     rmSync(root, { recursive: true, force: true });

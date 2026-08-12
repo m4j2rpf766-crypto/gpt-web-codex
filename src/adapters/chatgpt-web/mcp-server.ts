@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import { DirectToolService } from "../../standalone/direct-tools";
+import { IMAGE_PREVIEW_HTML, IMAGE_PREVIEW_RESOURCE_URI } from "../../standalone/image-preview";
 import { LunaJobManager } from "../../standalone/luna-jobs";
 import { LunaStateStore } from "../../standalone/state-store";
 
@@ -20,12 +21,22 @@ function result(value: Record<string, unknown>, isError = false) {
 function fileReadResult(value: ReturnType<DirectToolService["read"]>) {
   if (!("data" in value)) return result({ ...value });
   const metadata = { path: value.path, mime_type: value.mimeType, bytes: value.bytes };
+  const name = value.path.replaceAll("\\", "/").split("/").at(-1) || "image";
   return {
     content: [
       { type: "text" as const, text: JSON.stringify(metadata) },
       { type: "image" as const, data: value.data, mimeType: value.mimeType },
     ],
     structuredContent: metadata,
+    _meta: {
+      "openai/outputTemplate": IMAGE_PREVIEW_RESOURCE_URI,
+      webgpt_image_preview: {
+        name,
+        mime_type: value.mimeType,
+        bytes: value.bytes,
+        data_url: `data:${value.mimeType};base64,${value.data}`,
+      },
+    },
   };
 }
 
@@ -40,6 +51,28 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
+
+  server.registerResource("webgpt-image-preview", IMAGE_PREVIEW_RESOURCE_URI, {
+    title: "WebGPT local image preview",
+    description: "Inline preview card for a local image returned by file_read.",
+    mimeType: "text/html+skybridge",
+    _meta: {
+      "openai/widgetDescription": "Displays the local image returned by file_read directly in the conversation.",
+      "openai/widgetPrefersBorder": true,
+      "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
+    },
+  }, async () => ({
+    contents: [{
+      uri: IMAGE_PREVIEW_RESOURCE_URI,
+      mimeType: "text/html+skybridge",
+      text: IMAGE_PREVIEW_HTML,
+      _meta: {
+        "openai/widgetDescription": "Displays the local image returned by file_read directly in the conversation.",
+        "openai/widgetPrefersBorder": true,
+        "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
+      },
+    }],
+  }));
 
   server.registerTool("codexluna_start", {
     title: "Start Luna execution",
@@ -102,6 +135,11 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     description: "Read text directly or transfer a PNG, JPEG, GIF, or WebP image as a native MCP image content block so ChatGPT can inspect it. The resolved path and disclosed workspace are checked unless full access is selected. Images default to a 10 MB transfer limit and never appear as base64 text.",
     inputSchema: { path: z.string().min(1), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write"), max_chars: z.number().int().min(1).max(1_000_000).default(200_000), max_image_bytes: z.number().int().min(1).max(20_000_000).default(10_000_000) },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: {
+      "openai/outputTemplate": IMAGE_PREVIEW_RESOURCE_URI,
+      "openai/toolInvocation/invoking": "正在读取本地文件",
+      "openai/toolInvocation/invoked": "本地文件读取完成",
+    },
   }, async input => fileReadResult(direct.read(input.path, input.workspace_path, input.permission_mode, input.max_chars, input.max_image_bytes)));
 
   server.registerTool("file_list", {
