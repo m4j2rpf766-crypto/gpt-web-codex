@@ -2,7 +2,7 @@
   "name": "codex-chatgpt-web",
   "version": "2.1.8",
   "private": true,
-  "description": "A focused local Responses bridge that runs Codex tasks through a user-authenticated ChatGPT web session.",
+  "description": "A standalone ChatGPT Web planner with Luna execution and direct local MCP tools.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/miuuyy/codex-chatgpt-web.git"
@@ -72,7 +72,7 @@
   "keywords": [
     "codex",
     "chatgpt",
-    "responses-api",
+    "luna",
     "mcp",
     "playwright"
   ],

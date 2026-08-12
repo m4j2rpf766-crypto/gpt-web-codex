@@ -182,6 +182,43 @@ test("launcher gives cold cross-platform tunnel startup a bounded two-minute bud
   assert.equal(TUNNEL_MONITOR_FAILURE_THRESHOLD, 3);
 });
 
+test("standalone launcher startup never starts or health-checks a Responses daemon", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "webgpt-standalone-supervisor-"));
+  const descriptorPath = path.join(root, "runtime", "launcher-browser.json");
+  fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
+  fs.writeFileSync(descriptorPath, "{}\n");
+  fs.writeFileSync(path.join(root, "config.json"), `${JSON.stringify(launcherConfig(descriptorPath))}\n`);
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: root,
+    coreHome: root,
+    browserDescriptorPath: descriptorPath,
+    standaloneOnly: true,
+  });
+  let tunnelStarts = 0;
+  supervisor.startTunnel = async () => { tunnelStarts += 1; };
+  supervisor.startDaemon = async () => { throw new Error("Responses daemon must not start"); };
+  supervisor.proxyHealthPayload = async () => { throw new Error("Responses health must not be queried"); };
+  supervisor.proxyHealth = async () => { throw new Error("Responses health must not be queried"); };
+  try {
+    const result = await supervisor.startConfigured();
+    assert.deepEqual(result, {
+      status: "ready",
+      standalone: true,
+      daemonPid: null,
+      tunnelPid: undefined,
+    });
+    assert.equal(tunnelStarts, 1);
+    const state = JSON.parse(fs.readFileSync(supervisor.statePath, "utf8"));
+    assert.equal(state.daemonPid, null);
+    assert.equal(state.status, "ready");
+  } finally {
+    await supervisor.shutdown().catch(() => {});
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("launcher delegates long-lived tunnel supervision to native runtimes connect", () => {
   const config = launcherConfig("C:\\Users\\Example\\.codex-chatgpt-web\\runtime\\launcher-browser.json", {
     mode: "full",
@@ -204,8 +241,8 @@ test("launcher delegates long-lived tunnel supervision to native runtimes connec
     args: [
       "C:\\Program Files\\Codex Web GPT\\resources\\runtime\\app\\cli.js",
       "mcp",
-      "--broker-socket",
-      config.brokerSocketPath,
+      "--state-path",
+      "C:\\Users\\Example\\.codex-chatgpt-web\\standalone\\state.json",
     ],
     cwd: "C:\\Program Files\\Codex Web GPT\\resources\\runtime",
   };
@@ -216,7 +253,7 @@ test("launcher delegates long-lived tunnel supervision to native runtimes connec
   assert.equal(args.includes("run"), false);
   assert.equal(args.at(-1), "--json");
   assert.equal(args[args.indexOf("--mcp-command") + 1].includes("bun.exe"), true);
-  assert.equal(args[args.indexOf("--mcp-command") + 1].includes("\\\\\\\\.\\\\pipe\\\\codex-chatgpt-web-example"), true);
+  assert.equal(args[args.indexOf("--mcp-command") + 1].includes("standalone\\\\state.json"), true);
   assert.equal(args[args.indexOf("--mcp-command") + 1].includes("versions"), false);
   assert.throws(
     () => managedTunnelConnectArgs(config),
@@ -269,6 +306,9 @@ test("launcher repairs its runtime before building the tunnel MCP command", asyn
     const serializedRuntime = repairedRuntime.replaceAll("\\", "\\\\");
     assert.equal(runtimeRepairs, 1);
     assert.equal(command.includes(serializedRuntime), true);
+    assert.equal(command.includes('"mcp"'), true);
+    assert.equal(command.includes('"--state-path"'), true);
+    assert.equal(command.includes("standalone"), true);
     assert.equal(command.includes(`${path.sep}versions${path.sep}`), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

@@ -266,6 +266,7 @@ class RuntimeSupervisor {
     coreHome,
     browserDescriptorPath,
     publishOperation,
+    standaloneOnly = false,
     runtimeInvocationFactory = runtimeInvocation,
   }) {
     this.app = app;
@@ -276,6 +277,7 @@ class RuntimeSupervisor {
     this.coreHome = coreHome;
     this.browserDescriptorPath = browserDescriptorPath;
     this.publishOperation = publishOperation;
+    this.standaloneOnly = standaloneOnly;
     this.runtimeInvocationFactory = runtimeInvocationFactory;
     this.configPath = path.join(coreHome, "config.json");
     this.statePath = path.join(coreHome, "runtime", "launcher-supervisor.json");
@@ -961,6 +963,7 @@ class RuntimeSupervisor {
   }
 
   async startConfigured() {
+    if (this.standaloneOnly) return await this.startStandaloneConfigured();
     let config;
     try {
       config = this.readConfig();
@@ -1058,6 +1061,63 @@ class RuntimeSupervisor {
     }
   }
 
+  async startStandaloneConfigured() {
+    let config;
+    try {
+      config = this.readConfig();
+    } catch (error) {
+      const detail = errorMessage(error);
+      this.logger.warn("runtime.setup_required", { detail });
+      return { status: "needs-setup", detail };
+    }
+    if (!config) {
+      this.clearState();
+      return { status: "not-configured" };
+    }
+    if (config.releaseVersion !== this.app.getVersion()) {
+      const detail = `Config requires ${config.releaseVersion}; launcher is ${this.app.getVersion()}`;
+      this.writeState("needs-setup", detail);
+      this.logger.warn("runtime.setup_required", { detail });
+      return { status: "needs-setup", detail };
+    }
+
+    this.stopping = false;
+    this.publishOperation?.({
+      name: "runtime-start",
+      status: "running",
+      message: config.mode === "full" ? "Starting standalone MCP tunnel" : "Preparing standalone browser runtime",
+    });
+    try {
+      await this.startTunnel(config, "runtime-start");
+      this.restartHistory.tunnel = [];
+      this.daemon = null;
+      this.writeState("ready");
+      this.publishOperation?.({
+        name: "runtime-start",
+        status: "completed",
+        message: config.mode === "full" ? "Standalone MCP tools are ready" : "Standalone browser runtime is ready",
+      });
+      return { status: "ready", standalone: true, daemonPid: null, tunnelPid: this.tunnel?.pid };
+    } catch (error) {
+      this.stopping = true;
+      let cleanupError;
+      try {
+        if (this.tunnel) await this.stopTunnelGracefully(config);
+      } catch (caught) {
+        cleanupError = caught;
+      } finally {
+        this.stopping = false;
+      }
+      const primary = errorMessage(error);
+      const message = cleanupError
+        ? appendFailure(primary, "standalone MCP startup cleanup failed", cleanupError)
+        : primary;
+      this.tryWriteState("failed", message);
+      this.publishOperation?.({ name: "runtime-start", status: "failed", message });
+      throw new Error(message);
+    }
+  }
+
   recordRestart(name) {
     const cutoff = Date.now() - RESTART_WINDOW_MS;
     const recent = this.restartHistory[name].filter((at) => at >= cutoff);
@@ -1095,6 +1155,15 @@ class RuntimeSupervisor {
     if (this.stopping) return;
     const config = this.readConfig();
     if (!config) return;
+    if (this.standaloneOnly) {
+      if (name !== "tunnel" || config.mode !== "full") return;
+      this.publishOperation?.({ name: "runtime-recovery", status: "running", message: "Restarting MCP tunnel" });
+      await this.startTunnel(config, "runtime-recovery");
+      await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, "runtime-recovery");
+      if (!this.tryWriteState("ready")) throw new Error("Recovered MCP tunnel could not persist launcher ownership");
+      this.publishOperation?.({ name: "runtime-recovery", status: "completed", message: "MCP tunnel recovered" });
+      return;
+    }
     this.publishOperation?.({ name: "runtime-recovery", status: "running", message: `Restarting ${name}` });
     if (name === "tunnel") await this.startTunnel(config, "runtime-recovery");
     else await this.startDaemon(config);
@@ -1627,6 +1696,7 @@ class RuntimeSupervisor {
   }
 
   async performStopForSetup() {
+    if (this.standaloneOnly) return await this.performStandaloneStop();
     if (this.startPromise) {
       try {
         await this.startPromise;
@@ -1724,6 +1794,40 @@ class RuntimeSupervisor {
         }
       }
       this.tryWriteState(restoredReady ? "ready" : "failed", message);
+      throw new Error(message);
+    } finally {
+      this.stopping = false;
+    }
+  }
+
+  async performStandaloneStop() {
+    if (this.startPromise) {
+      try {
+        await this.startPromise;
+      } catch (error) {
+        this.logger.warn("runtime.start_failed_before_stop", { message: errorMessage(error) });
+      }
+    }
+    const config = this.readConfig();
+    this.stopping = true;
+    this.stopTunnelMonitor();
+    if (this.restartTimers.tunnel) {
+      clearTimeout(this.restartTimers.tunnel);
+      this.restartTimers.tunnel = null;
+    }
+    if (this.recoveryTasks.size > 0) await Promise.allSettled([...this.recoveryTasks]);
+    try {
+      if (config?.mode === "full" && !this.tunnel) await this.adoptConfiguredTunnelForStop(config);
+      if (this.tunnel) {
+        if (!config) throw new Error("launcher-owned MCP tunnel cannot be stopped without configuration");
+        await this.stopTunnelGracefully(config);
+      }
+      this.daemon = null;
+      this.clearState();
+      return { status: "stopped", standalone: true };
+    } catch (error) {
+      const message = errorMessage(error);
+      this.tryWriteState("failed", message);
       throw new Error(message);
     } finally {
       this.stopping = false;

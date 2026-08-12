@@ -1,14 +1,11 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import type { AppConfig } from "./config";
-import { getConfigDir, getConfigPath, loadConfig } from "./config";
-import { join } from "node:path";
-import { inspectCodexIntegration } from "./codex-integration";
+import { getConfigPath, loadConfig } from "./config";
 import { browserLoginStateExists, loginVerificationMarkerPath } from "./browser-login";
 import { getServiceStatus } from "./service";
 import { tunnelStatus } from "./tunnel";
 import { getTunnelServiceStatus } from "./tunnel-service";
 import { inspectLauncherBrowserHost, readLauncherBrowserHostDescriptor } from "./launcher-browser-host";
-import { processRunning } from "./process";
 
 export type CheckStatus = "ok" | "warning" | "error";
 
@@ -28,69 +25,6 @@ export interface DoctorReport {
 function secureFile(path: string): boolean {
   if (process.platform === "win32") return true;
   return (statSync(path).mode & 0o077) === 0;
-}
-
-function launcherOwnershipError(config: AppConfig, health: Record<string, unknown>): string | undefined {
-  if (config.browserHost !== "launcher") return undefined;
-  const path = join(getConfigDir(), "runtime", "launcher-supervisor.json");
-  if (!existsSync(path)) return `Launcher runtime ownership marker is missing: ${path}`;
-  let state: Record<string, unknown>;
-  try {
-    state = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  } catch (error) {
-    return `Launcher runtime ownership marker is invalid: ${error instanceof Error ? error.message : String(error)}`;
-  }
-  if (state.version !== 1
-    || !Number.isInteger(state.ownerPid)
-    || (state.ownerPid as number) < 1
-    || !Number.isInteger(state.daemonPid)
-    || (state.daemonPid as number) < 1
-    || state.status !== "ready") {
-    return "Launcher runtime ownership marker is incomplete or not ready";
-  }
-  if (!processRunning(state.ownerPid)) {
-    return `Launcher owner process is not running (pid ${String(state.ownerPid)})`;
-  }
-  if (health.pid !== state.daemonPid) {
-    return `Responses proxy pid ${String(health.pid)} does not match launcher-owned pid ${String(state.daemonPid)}`;
-  }
-  return undefined;
-}
-
-async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2_000);
-  try {
-    const response = await fetch(`http://${config.host}:${config.port}/healthz`, { signal: controller.signal });
-    if (!response.ok) return { id: "proxy", status: "error", message: `Responses proxy returned HTTP ${response.status}` };
-    const body = await response.json() as Record<string, unknown>;
-    if (body.service !== "codex-chatgpt-web" || body.status !== "ok") {
-      return { id: "proxy", status: "error", message: "The configured port belongs to another service" };
-    }
-    if (body.mode !== config.mode) {
-      return { id: "proxy", status: "error", message: `Daemon is running in ${String(body.mode)} mode; config requires ${config.mode}` };
-    }
-    if (body.version !== config.releaseVersion) {
-      return { id: "proxy", status: "error", message: `Daemon version is ${String(body.version)}; config requires ${config.releaseVersion}` };
-    }
-    if (body.accepting_turns !== true) {
-      return {
-        id: "proxy",
-        status: "error",
-        message: "Responses proxy is still drained and is not accepting Codex turns",
-      };
-    }
-    const ownershipError = launcherOwnershipError(config, body);
-    if (ownershipError) {
-      return { id: "proxy", status: "error", message: "Responses proxy ownership could not be verified", detail: ownershipError };
-    }
-    return { id: "proxy", status: "ok", message: `Responses proxy is healthy on 127.0.0.1:${config.port}` };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { id: "proxy", status: "error", message: "Responses proxy is not reachable", detail };
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 export async function runDoctor(): Promise<DoctorReport> {
@@ -138,14 +72,11 @@ export async function runDoctor(): Promise<DoctorReport> {
     }
   }
 
-  const codex = inspectCodexIntegration();
-  if (!codex.installed) {
-    checks.push({ id: "codex", status: "error", message: "Codex model route is not installed" });
-  } else if (codex.errors.length > 0) {
-    checks.push({ id: "codex", status: "error", message: "Codex integration is inconsistent", detail: codex.errors.join("; ") });
-  } else {
-    checks.push({ id: "codex", status: "ok", message: "Codex native model route is installed" });
-  }
+  checks.push({
+    id: "standalone-mcp",
+    status: "ok",
+    message: "Standalone MCP exposes codexluna, file, and terminal tools without a Codex model route",
+  });
 
   const service = getServiceStatus();
   if (config.browserHost === "launcher") {
@@ -156,7 +87,7 @@ export async function runDoctor(): Promise<DoctorReport> {
           message: "A legacy OS background service still exists; rerun launcher setup to migrate ownership",
           detail: JSON.stringify(service),
         }
-      : { id: "service", status: "ok", message: "Launcher owns the background runtime" });
+      : { id: "service", status: "ok", message: "No legacy Responses background service is installed" });
   } else if (!service.supported) {
     checks.push({ id: "service", status: "warning", message: "Managed service is unavailable on this OS; keep `serve` running manually" });
   } else if (!service.installed || !service.loaded) {
@@ -164,8 +95,6 @@ export async function runDoctor(): Promise<DoctorReport> {
   } else {
     checks.push({ id: "service", status: "ok", message: "macOS background service is loaded" });
   }
-  checks.push(await proxyCheck(config));
-
   if (config.mode === "full") {
     const settings = config.tunnel!;
     if (!existsSync(settings.binaryPath)) {
@@ -206,7 +135,7 @@ export async function runDoctor(): Promise<DoctorReport> {
       detail: "Verify it once at https://chatgpt.com/#settings/Plugins while the tunnel is ready.",
     });
   } else {
-    checks.push({ id: "tools", status: "warning", message: "Browser-only mode intentionally has no local tools or MCP tunnel" });
+    checks.push({ id: "tools", status: "warning", message: "The MCP tool contract is available locally, but ChatGPT needs full mode and a tunnel to call it" });
   }
 
   return {

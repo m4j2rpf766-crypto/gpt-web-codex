@@ -90,8 +90,6 @@ let exitCommitted = false;
 let smokePassedThisSession = false;
 let cdpPort = 0;
 let lastOperation = null;
-let catalogVerificationTimer = null;
-let catalogVerificationInFlight = false;
 let updateController = null;
 
 function findFreePort() {
@@ -118,49 +116,6 @@ function publishOperation(operation) {
   send("launcher:operation", operation);
 }
 
-function stopCatalogVerificationMonitor() {
-  if (catalogVerificationTimer) clearInterval(catalogVerificationTimer);
-  catalogVerificationTimer = null;
-}
-
-function startCatalogVerificationMonitor({ logger, stateStore }) {
-  stopCatalogVerificationMonitor();
-  const check = async () => {
-    const current = stateStore.read();
-    if (current.coreSetupComplete !== true || current.codexCatalogVerified === true) {
-      stopCatalogVerificationMonitor();
-      return;
-    }
-    if (catalogVerificationInFlight || !runtimeSupervisor) return;
-    catalogVerificationInFlight = true;
-    try {
-      const config = runtimeSupervisor.readConfig();
-      const health = await runtimeSupervisor.proxyHealthPayload(config);
-      if (!Number.isInteger(health?.successful_model_catalog_requests)
-        || health.successful_model_catalog_requests < 1) return;
-      const state = stateStore.update({
-        codexCatalogVerified: true,
-        codexRestartRequired: false,
-      });
-      logger.info("codex.model_catalog_verified", {
-        requests: health.successful_model_catalog_requests,
-        at: health.last_successful_model_catalog_request_at,
-      });
-      send("launcher:state-changed", state);
-      stopCatalogVerificationMonitor();
-    } catch (error) {
-      logger.debug("codex.model_catalog_verification_pending", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      catalogVerificationInFlight = false;
-    }
-  };
-  catalogVerificationTimer = setInterval(() => { void check(); }, 2_000);
-  catalogVerificationTimer.unref?.();
-  void check();
-}
-
 async function restoreCodexRouteAfterRuntimeFailure({ logger, stateStore }) {
   try {
     const route = await runtimeHost.restoreBridgeRoute("runtime-start-fail-safe");
@@ -171,7 +126,6 @@ async function restoreCodexRouteAfterRuntimeFailure({ logger, stateStore }) {
       codexRestartRequired: false,
     });
     send("launcher:state-changed", state);
-    stopCatalogVerificationMonitor();
     logger.warn("bridge.route_restored_after_runtime_failure", {
       changed: route.changed === true,
     });
@@ -476,8 +430,6 @@ function registerIpc({ logger, stateStore }) {
       codexRestartRequired: false,
     });
     send("launcher:state-changed", state);
-    if (result.active) startCatalogVerificationMonitor({ logger, stateStore });
-    else stopCatalogVerificationMonitor();
     return state;
   });
   handle("launcher:uninstall-integration", async () => {
@@ -513,7 +465,6 @@ function registerIpc({ logger, stateStore }) {
       codexRestartRequired: false,
     });
     send("launcher:state-changed", state);
-    stopCatalogVerificationMonitor();
     return { cancelled: false, state };
   });
   handle("launcher:setup-core", async () => {
@@ -622,7 +573,6 @@ async function requestQuit() {
       throw new Error(`Wait for ${activeOperation} to finish before quitting Codex Web GPT`);
     }
     await runtimeSupervisor?.shutdown();
-    stopCatalogVerificationMonitor();
     quitting = true;
     await browserHost?.persistSession();
     browserHost?.destroy();
@@ -712,6 +662,7 @@ async function start() {
     coreHome: CORE_HOME,
     browserDescriptorPath: BROWSER_DESCRIPTOR_PATH,
     publishOperation,
+    standaloneOnly: true,
   });
   runtimeHost = new RuntimeHost({
     app,
@@ -845,7 +796,6 @@ async function start() {
     return runtimeSupervisor.startIfConfigured();
   })().then(async (runtime) => {
     if (runtime.status === "bridge-disabled") {
-      stopCatalogVerificationMonitor();
       return;
     }
     if (runtime.status === "ready") {
@@ -862,7 +812,6 @@ async function start() {
         const state = stateStore.update(patch);
         send("launcher:state-changed", state);
       }
-      startCatalogVerificationMonitor({ logger, stateStore });
       return;
     }
     if (runtime.status === "not-configured") {
