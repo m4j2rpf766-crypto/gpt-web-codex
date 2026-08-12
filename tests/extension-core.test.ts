@@ -28,7 +28,9 @@ describe("Chrome extension conversation contract", () => {
     expect(source).toContain("naturalDeadline = Date.now() + 5000");
     expect(source).toContain("point: point(stop)");
     expect(source).toContain('button[data-testid="send-button"]');
+    expect(source).toContain("send.click()");
     expect(source).toContain('type: "native-click", point: point(send)');
+    expect(source).toContain('composerText() === "" || responseInProgress()');
     expect(source).not.toContain('type: "native-submit"');
     expect(source).toContain("当前是未由扩展初始化的既有会话");
     expect(source).toContain("if (!assistantHas(Core.LUNA_TOOL_BINDING_ACK))");

@@ -129,7 +129,20 @@ async function submit(text) {
   }
   if (!draft) await request({ type: "native-fill", point: point(input), text });
   const send = await waitFor(sendButton, "the enabled ChatGPT send button", 15000);
-  await request({ type: "native-click", point: point(send) });
+  send.click();
+  const accepted = await waitFor(
+    () => composerText() === "" || responseInProgress(),
+    "ChatGPT to accept the submitted prompt",
+    3000,
+  ).catch(() => false);
+  if (!accepted) {
+    await request({ type: "native-click", point: point(send) });
+    await waitFor(
+      () => composerText() === "" || responseInProgress(),
+      "ChatGPT to accept the trusted submitted prompt",
+      5000,
+    );
+  }
 }
 
 async function waitForAcknowledgement(text) {
