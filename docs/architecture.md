@@ -11,7 +11,7 @@ The stable address-bar conversation URL is the web session identity. Tabs are no
 
 The launcher supervisor starts only the standalone MCP tunnel runtime. There is no Responses proxy, Codex model provider, model-catalog injection, or Codex routing lifecycle.
 
-Browser automation remains shared by sign-in verification, smoke testing, connector verification, and the visible memory-boundary bootstrap. These browser-maintenance paths do not provide a Codex model route.
+Browser automation remains shared by sign-in verification, smoke testing, connector verification, and the visible memory-boundary bootstrap. Startup restores the last stable `/c/` conversation without injecting prompts; the bootstrap runs only from the explicit new-conversation action. These browser-maintenance paths do not provide a Codex model route.
 
 Long Luna jobs are asynchronous. The MCP call returns a job id; status is read separately. A default 15-minute job timeout requests cancellation of the owned child process tree but preserves the web-to-Luna session binding for later continuation.
 

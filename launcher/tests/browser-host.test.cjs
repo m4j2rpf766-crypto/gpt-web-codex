@@ -772,20 +772,20 @@ test("opening ChatGPT normalizes a restored temporary chat before showing the br
   assert.equal(result.url, "https://chatgpt.com/");
 });
 
-test("existing conversation bootstrap is idempotent and a new chat receives its exact stable binding", async () => {
-  const existingPrompts = [];
+test("initial binding refuses existing conversations and a new chat receives its exact stable binding", async () => {
   const existing = Object.assign(Object.create(BrowserHost.prototype), {
     sessionBootstrapOperation: null,
     view: {
       webContents: {
         getURL: () => "https://chatgpt.com/c/019ff1b5-0747-7bc0-8871-977533a91227",
-        executeJavaScript: async script => script.includes("localStorage.getItem") ? true : null,
+        executeJavaScript: async () => null,
       },
     },
-    submitVisibleHomePrompt: async prompt => existingPrompts.push(prompt),
   });
-  await BrowserHost.prototype.ensureSessionBootstrap.call(existing);
-  assert.deepEqual(existingPrompts, []);
+  await assert.rejects(
+    BrowserHost.prototype.ensureSessionBootstrap.call(existing),
+    /only allowed for a blank new conversation/,
+  );
   assert.equal(existing.sessionBootstrapOperation, null);
 
   let currentUrl = "https://chatgpt.com/";
@@ -817,6 +817,37 @@ test("existing conversation bootstrap is idempotent and a new chat receives its 
   assert.equal(fresh.sessionBootstrapOperation, null);
 });
 
+test("the explicit new-conversation action opens a blank chat and performs the only initial binding", async () => {
+  let currentUrl = "https://chatgpt.com/c/previous-conversation";
+  const calls = [];
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    view: {
+      webContents: {
+        getURL: () => currentUrl,
+        loadURL: async url => { calls.push(["load", url]); currentUrl = url; },
+      },
+    },
+    withManualOperation: async (name, action) => { calls.push(["operation", name]); return await action(); },
+    setState: patch => calls.push(["state", patch]),
+    show: () => calls.push(["show"]),
+    waitForAuthenticated: async () => calls.push(["authenticated"]),
+    ensureSessionBootstrap: async () => calls.push(["bootstrap"]),
+    snapshot: () => ({ url: currentUrl }),
+  });
+
+  const result = await BrowserHost.prototype.newConversation.call(fixture);
+
+  assert.deepEqual(calls, [
+    ["operation", "new ChatGPT conversation"],
+    ["state", { status: "loading", message: "Opening a new ChatGPT conversation", loading: true }],
+    ["load", "https://chatgpt.com/"],
+    ["show"],
+    ["authenticated"],
+    ["bootstrap"],
+  ]);
+  assert.equal(result.url, "https://chatgpt.com/");
+});
+
 test("temporary chat is replaced with normal chat before any visible session declaration", async () => {
   let currentUrl = "https://chatgpt.com/?temporary-chat=true";
   const loads = [];
@@ -844,12 +875,17 @@ test("temporary chat is replaced with normal chat before any visible session dec
   assert.match(prompts[1], /chatgpt:019ff1b5-0747-7bc0-8871-977533a91227/);
 });
 
-test("normal conversation navigation schedules authentication and session bootstrap", () => {
+test("normal conversation navigation remembers its URL without triggering initial binding", () => {
   const source = fs.readFileSync(require.resolve("../electron/browser-host.cjs"), "utf8");
   assert.match(
     source,
     /did-navigate-in-page[\s\S]*?webSessionIdFromUrl\(url\)[\s\S]*?this\.probeAuthentication\(\)/,
   );
+  const probeSource = source.slice(
+    source.indexOf("async probeAuthentication()"),
+    source.indexOf("async submitVisibleHomePrompt"),
+  );
+  assert.doesNotMatch(probeSource, /ensureSessionBootstrap/);
 });
 
 test("browser helper operations fail closed when the configured connector name is invalid", async () => {

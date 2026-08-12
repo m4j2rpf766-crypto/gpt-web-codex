@@ -108,6 +108,7 @@ export interface LauncherApi {
   setBrowserSurfaceActive(active: boolean): Promise<BrowserState>;
   showBrowser(): Promise<BrowserState>;
   hideBrowser(): Promise<BrowserState>;
+  newConversation(): Promise<BrowserState>;
   navigateBrowser(action: "back" | "forward" | "reload"): Promise<BrowserState>;
   zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
   selectBrowserTab(tabId: string): Promise<BrowserState>;

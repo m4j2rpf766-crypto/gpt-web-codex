@@ -235,8 +235,11 @@ test("launcher migrates and verifies the explicit direct-turn connector identity
   }
 });
 
-test("launcher refreshes persisted ChatGPT authentication before presenting setup", () => {
-  assert.match(electronMain, /browserHost\.refreshAuthentication\(\)/);
+test("launcher restores the last ChatGPT conversation and exposes explicit new-chat binding", () => {
+  assert.match(electronMain, /browserHost\.restoreLastConversation\(\)/);
+  assert.match(electronMain, /launcher:browser-new-conversation/);
+  assert.match(appSource, /copy\.newConversation/);
+  assert.match(appSource, /api!\.newConversation\(\)/);
   assert.match(appSource, /browser\?\.status === "loading" \? copy\.checkingSignIn/);
   assert.match(i18nSource, /checkingSignIn: "Checking saved session"/);
 });

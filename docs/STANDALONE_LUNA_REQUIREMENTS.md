@@ -40,8 +40,10 @@ session is serialized. Separate Web conversations may run independently.
 
 ## Session memory boundary
 
-Before enabling tools in a new conversation, show a visible local notice and automatically send a
-visible bootstrap message to ChatGPT. Keep the message and acknowledgement in the chat.
+The launcher restores the last valid `chatgpt.com/c/<conversation-id>` URL on startup without
+replaying bootstrap messages. Only the explicit **New conversation** action opens a blank normal
+chat, shows a visible local notice, and automatically sends the visible bootstrap messages to
+ChatGPT. Keep the messages and acknowledgements in that new chat.
 
 Bootstrap message:
 

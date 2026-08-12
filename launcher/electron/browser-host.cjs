@@ -1006,6 +1006,31 @@ class BrowserHost {
     }
   }
 
+  async restoreLastConversation() {
+    await this.ready();
+    if (this.activeTraceId || this.manualOperation) return this.snapshot();
+    this.activateHomeSurface();
+    await this.openLastConversationOrHome();
+    await this.probeAuthentication();
+    this.show();
+    return this.snapshot();
+  }
+
+  async newConversation() {
+    return await this.withManualOperation("new ChatGPT conversation", async () => {
+      const contents = this.view.webContents;
+      this.setState({ status: "loading", message: "Opening a new ChatGPT conversation", loading: true });
+      await contents.loadURL(NORMAL_CHAT_URL);
+      this.show();
+      await this.waitForAuthenticated();
+      if (webSessionIdFromUrl(contents.getURL())) {
+        throw new Error("ChatGPT did not open a blank new conversation");
+      }
+      await this.ensureSessionBootstrap();
+      return this.snapshot();
+    });
+  }
+
   hide() {
     this.visible = false;
     this.syncViewVisibility();
@@ -1349,13 +1374,6 @@ class BrowserHost {
           : { status: "ready", message: "ChatGPT is ready" };
       this.setState({ ...availability, authenticated: true, url });
       if (!wasAuthenticated) this.logger.info("browser.authenticated", { url });
-      if (!this.activeTraceId && !this.manualOperation && !this.restoringSession) {
-        void this.ensureSessionBootstrap().catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          this.logger.error("browser.session_bootstrap_failed", { message });
-          this.setState({ status: "error", message: `Chat session bootstrap failed: ${message}`, loading: false });
-        });
-      }
     } else {
       const loaded = result.readyState === "complete";
       this.setState({
@@ -1419,12 +1437,7 @@ class BrowserHost {
       const contents = this.view.webContents;
       if (isTemporaryChatUrl(contents.getURL())) await contents.loadURL(NORMAL_CHAT_URL);
       let webSessionId = webSessionIdFromUrl(contents.getURL());
-      if (webSessionId) {
-        const alreadyBound = await contents.executeJavaScript(
-          `localStorage.getItem(${JSON.stringify(`webgpt.boundary.${webSessionId}`)}) === "1"`, true,
-        ).catch(() => false);
-        if (alreadyBound) return;
-      }
+      if (webSessionId) throw new Error("Initial prompt binding is only allowed for a blank new conversation");
       this.setState({ status: "loading", message: "Declaring this chat's memory boundary", loading: false });
       await this.submitVisibleHomePrompt(memoryBoundaryPrompt());
       await this.waitForVisibleAcknowledgement(SESSION_MEMORY_BOUNDARY_ACK);

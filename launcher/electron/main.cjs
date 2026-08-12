@@ -346,6 +346,7 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-surface-active", (_event, active) => browserHost.setSurfaceActive(active === true));
   handle("launcher:browser-show", () => browserHost.reveal());
   handle("launcher:browser-hide", () => { browserHost?.hide(); return browserHost?.snapshot(); });
+  handle("launcher:browser-new-conversation", () => browserHost.newConversation());
   handle("launcher:browser-navigate", (_event, action) => browserHost.navigate(action));
   handle("launcher:browser-zoom", (_event, action) => browserHost.zoom(action));
   handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
@@ -624,8 +625,8 @@ async function start() {
   if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
   const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
   if (!launcherSmokeTest) {
-    void browserHost.refreshAuthentication().catch((error) => {
-      logger.warn("browser.session_refresh_failed", {
+    void browserHost.restoreLastConversation().catch((error) => {
+      logger.warn("browser.session_restore_failed", {
         message: error instanceof Error ? error.message : String(error),
       });
     });

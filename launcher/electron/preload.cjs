@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   setBrowserSurfaceActive: (active) => ipcRenderer.invoke("launcher:browser-surface-active", active),
   showBrowser: () => ipcRenderer.invoke("launcher:browser-show"),
   hideBrowser: () => ipcRenderer.invoke("launcher:browser-hide"),
+  newConversation: () => ipcRenderer.invoke("launcher:browser-new-conversation"),
   navigateBrowser: (action) => ipcRenderer.invoke("launcher:browser-navigate", action),
   zoomBrowser: (action) => ipcRenderer.invoke("launcher:browser-zoom", action),
   selectBrowserTab: (tabId) => ipcRenderer.invoke("launcher:browser-tab-select", tabId),

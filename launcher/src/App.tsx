@@ -395,6 +395,17 @@ function LauncherShell({
     if (compactSidebar) setSidebarOpen(false);
   };
 
+  const openNewConversation = async () => {
+    setError(null);
+    navigateSurface("browser");
+    try {
+      await api!.setBrowserSurfaceActive(true);
+      await api!.newConversation();
+    } catch (cause) {
+      setError(messageOf(cause));
+    }
+  };
+
   const installUpdate = async () => {
     setError(null);
     try {
@@ -493,6 +504,13 @@ function LauncherShell({
                   icon="browser"
                   label={copy.browser}
                   onClick={() => navigateSurface("browser")}
+                />
+                <SidebarItem
+                  active={false}
+                  disabled={browser?.authenticated !== true || browser.status === "loading" || browser.status === "running"}
+                  icon="plus"
+                  label={copy.newConversation}
+                  onClick={() => void openNewConversation()}
                 />
               </SidebarGroup>
               <SidebarGroup label={copy.configuration}>
