@@ -241,6 +241,7 @@ test("launcher restores the last ChatGPT conversation and exposes explicit new-c
   assert.match(electronMain, /launcher:browser-open-conversation/);
   assert.match(appSource, /copy\.newConversation/);
   assert.match(appSource, /api!\.newConversation\(\)/);
+  assert.match(browserHostSource, /ensureChatExperience\(\)/);
   assert.match(appSource, /snapshot\.state\.conversationHistory\.map/);
   assert.match(appSource, /api!\.openConversation\(conversationId\)/);
   assert.match(appSource, /browser\?\.status === "loading" \? copy\.checkingSignIn/);

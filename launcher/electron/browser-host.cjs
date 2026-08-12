@@ -63,6 +63,8 @@ const COMPOSER_SELECTOR = [
   '[contenteditable="true"][role="textbox"]',
   "textarea",
 ].join(", ");
+const CHAT_EXPERIENCE_LABELS = ["Chat", "聊天"];
+const WORK_EXPERIENCE_LABELS = ["Work", "工作"];
 const CHATGPT_VIEWPORT_CSS = `
   html,
   body {
@@ -1035,12 +1037,63 @@ class BrowserHost {
       await contents.loadURL(NORMAL_CHAT_URL);
       this.show();
       await this.waitForAuthenticated();
+      await this.ensureChatExperience();
       if (webSessionIdFromUrl(contents.getURL())) {
         throw new Error("ChatGPT did not open a blank new conversation");
       }
       await this.ensureSessionBootstrap();
       return this.snapshot();
     });
+  }
+
+  async ensureChatExperience() {
+    const contents = this.view.webContents;
+    const chatLabels = javaScriptLiteral(CHAT_EXPERIENCE_LABELS);
+    const workLabels = javaScriptLiteral(WORK_EXPERIENCE_LABELS);
+    const outcome = await contents.executeJavaScript(`(() => {
+      const visible = (element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return element.isConnected && rect.width > 0 && rect.height > 0
+          && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+      };
+      const label = (element) => (element.getAttribute("aria-label") || element.textContent || "")
+        .replace(/\\s+/g, " ").trim();
+      const chatLabels = new Set(${chatLabels});
+      const workLabels = new Set(${workLabels});
+      const controls = [...document.querySelectorAll('button, [role="tab"], [role="radio"]')]
+        .filter(visible);
+      for (const chat of controls.filter(element => chatLabels.has(label(element)))) {
+        let group = chat.parentElement;
+        for (let depth = 0; group && depth < 5; depth += 1, group = group.parentElement) {
+          const groupedControls = controls.filter(element => group.contains(element));
+          const work = groupedControls.find(element => workLabels.has(label(element)));
+          if (!work) continue;
+          chat.click();
+          return { ok: true, switched: true };
+        }
+      }
+      const selectedWork = controls.some(element => workLabels.has(label(element)) && (
+        element.getAttribute("aria-selected") === "true"
+        || element.getAttribute("aria-pressed") === "true"
+        || element.getAttribute("data-state") === "active"
+        || element.getAttribute("data-selected") === "true"
+      ));
+      return selectedWork
+        ? { ok: false, reason: "work_selected_without_chat_control" }
+        : { ok: true, switched: false };
+    })()`, true);
+    if (!outcome?.ok) {
+      throw new Error(`ChatGPT is in Work mode and Chat mode could not be selected (${outcome?.reason || "unknown"})`);
+    }
+    if (outcome.switched) {
+      await sleep(750);
+      await this.waitForAuthenticated();
+      if (webSessionIdFromUrl(contents.getURL())) {
+        throw new Error("Selecting Chat opened an existing conversation instead of a blank chat");
+      }
+    }
+    this.logger.info("browser.chat_experience_selected", { switched: outcome.switched === true });
   }
 
   async openConversation(conversationId) {

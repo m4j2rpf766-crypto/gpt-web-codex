@@ -831,6 +831,7 @@ test("the explicit new-conversation action opens a blank chat and performs the o
     setState: patch => calls.push(["state", patch]),
     show: () => calls.push(["show"]),
     waitForAuthenticated: async () => calls.push(["authenticated"]),
+    ensureChatExperience: async () => calls.push(["chat-experience"]),
     ensureSessionBootstrap: async () => calls.push(["bootstrap"]),
     snapshot: () => ({ url: currentUrl }),
   });
@@ -843,9 +844,22 @@ test("the explicit new-conversation action opens a blank chat and performs the o
     ["load", "https://chatgpt.com/"],
     ["show"],
     ["authenticated"],
+    ["chat-experience"],
     ["bootstrap"],
   ]);
   assert.equal(result.url, "https://chatgpt.com/");
+});
+
+test("a new conversation selects Chat before sending any initial binding prompt", () => {
+  const source = fs.readFileSync(require.resolve("../electron/browser-host.cjs"), "utf8");
+  const newConversation = source.slice(
+    source.indexOf("async newConversation()"),
+    source.indexOf("async ensureChatExperience()"),
+  );
+  assert.match(newConversation, /waitForAuthenticated\(\)[\s\S]*?ensureChatExperience\(\)[\s\S]*?ensureSessionBootstrap\(\)/);
+  assert.match(source, /CHAT_EXPERIENCE_LABELS = \["Chat", "聊天"\]/);
+  assert.match(source, /WORK_EXPERIENCE_LABELS = \["Work", "工作"\]/);
+  assert.match(source, /work_selected_without_chat_control/);
 });
 
 test("a saved conversation opens its exact ChatGPT URL without initial binding", async () => {
