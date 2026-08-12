@@ -32,6 +32,7 @@ const { createUpdateController } = require("./update.cjs");
 const {
   createStateStore,
   nextSessionRefreshReminderAt,
+  upsertConversationHistory,
   validateSidebarState,
 } = require("./state.cjs");
 const {
@@ -347,6 +348,7 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-show", () => browserHost.reveal());
   handle("launcher:browser-hide", () => { browserHost?.hide(); return browserHost?.snapshot(); });
   handle("launcher:browser-new-conversation", () => browserHost.newConversation());
+  handle("launcher:browser-open-conversation", (_event, conversationId) => browserHost.openConversation(conversationId));
   handle("launcher:browser-navigate", (_event, action) => browserHost.navigate(action));
   handle("launcher:browser-zoom", (_event, action) => browserHost.zoom(action));
   handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
@@ -604,6 +606,12 @@ async function start() {
     logger,
     loginWithSystemBrowser: () => runtimeHost.captureSystemBrowserLogin(),
     publishState: (state) => send("launcher:browser-state", state),
+    recordConversation: (conversation) => {
+      const current = stateStore.read();
+      const conversationHistory = upsertConversationHistory(current.conversationHistory, conversation);
+      const state = stateStore.update({ conversationHistory });
+      send("launcher:state-changed", state);
+    },
   });
   await browserHost.ready();
   const updaterRuntimeRoot = runtimeRootProvider();

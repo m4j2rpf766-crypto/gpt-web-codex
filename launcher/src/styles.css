@@ -364,6 +364,17 @@ code {
   color: var(--color-text-primary);
 }
 
+.sidebar-item.is-history {
+  height: 30px;
+  padding-left: 19px;
+  font-size: 12px;
+}
+
+.sidebar-item.is-history > svg {
+  width: 14px;
+  height: 14px;
+}
+
 .sidebar-item.is-update {
   margin-bottom: 5px;
   background: rgb(51 156 255 / 14%);

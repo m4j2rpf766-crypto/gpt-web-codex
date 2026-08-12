@@ -7,6 +7,7 @@ export type IconName =
   | "browser"
   | "check"
   | "chevron"
+  | "conversation"
   | "close"
   | "external"
   | "forward"
@@ -34,6 +35,7 @@ export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGEle
       {name === "browser" ? <><rect {...common} x="3" y="4" width="18" height="16" rx="3" /><path {...common} d="M3 9h18M7 6.5h.01M10 6.5h.01" /></> : null}
       {name === "check" ? <path {...common} d="m5 12.5 4.2 4.2L19 7" /> : null}
       {name === "chevron" ? <path {...common} d="m9 6 6 6-6 6" /> : null}
+      {name === "conversation" ? <><path {...common} d="M5 5.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" /></> : null}
       {name === "close" ? <path {...common} d="m6 6 12 12M18 6 6 18" /> : null}
       {name === "external" ? <><path {...common} d="M14 5h5v5M19 5l-8 8" /><path {...common} d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></> : null}
       {name === "forward" ? <path {...common} d="m9.5 6 6 6-6 6" /> : null}

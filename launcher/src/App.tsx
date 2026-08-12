@@ -406,6 +406,19 @@ function LauncherShell({
     }
   };
 
+  const openConversation = async (conversationId: string) => {
+    setError(null);
+    navigateSurface("browser");
+    try {
+      await api!.setBrowserSurfaceActive(true);
+      await api!.openConversation(conversationId);
+    } catch (cause) {
+      setError(messageOf(cause));
+    }
+  };
+
+  const activeConversationId = conversationIdFromUrl(browser?.url);
+
   const installUpdate = async () => {
     setError(null);
     try {
@@ -512,6 +525,18 @@ function LauncherShell({
                   label={copy.newConversation}
                   onClick={() => void openNewConversation()}
                 />
+                {snapshot.state.conversationHistory.map((conversation) => (
+                  <SidebarItem
+                    active={surface === "browser" && activeConversationId === conversation.id}
+                    disabled={browser?.status === "loading" || browser?.status === "running"}
+                    icon="conversation"
+                    key={conversation.id}
+                    label={conversation.title}
+                    onClick={() => void openConversation(conversation.id)}
+                    title={conversation.title}
+                    tone="history"
+                  />
+                ))}
               </SidebarGroup>
               <SidebarGroup label={copy.configuration}>
                 <SidebarItem
@@ -665,6 +690,7 @@ function SidebarItem({
   icon,
   label,
   onClick,
+  title,
   tone,
 }: {
   active: boolean;
@@ -673,14 +699,16 @@ function SidebarItem({
   icon: IconName;
   label: string;
   onClick: () => void;
-  tone?: "update";
+  title?: string;
+  tone?: "update" | "history";
 }) {
   return (
     <button
       aria-current={active ? "page" : undefined}
-      className={`sidebar-item${active ? " is-active" : ""}${tone === "update" ? " is-update" : ""}`}
+      className={`sidebar-item${active ? " is-active" : ""}${tone === "update" ? " is-update" : ""}${tone === "history" ? " is-history" : ""}`}
       disabled={disabled}
       onClick={onClick}
+      title={title}
       type="button"
     >
       <Icon name={icon} />
@@ -688,6 +716,18 @@ function SidebarItem({
       {badge ? <i className="sidebar-item-badge">{badge}</i> : null}
     </button>
   );
+}
+
+function conversationIdFromUrl(value: string | undefined) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.origin !== "https://chatgpt.com") return null;
+    const match = url.pathname.match(/^\/c\/([A-Za-z0-9_-]{8,256})\/?$/);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function BrowserSurface({

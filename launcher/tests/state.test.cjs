@@ -7,6 +7,7 @@ const {
   SESSION_REFRESH_REMINDER_INTERVAL_MS,
   createStateStore,
   nextSessionRefreshReminderAt,
+  upsertConversationHistory,
   validateSidebarState,
 } = require("../electron/state.cjs");
 
@@ -28,6 +29,7 @@ test("launcher state persists standalone preferences atomically", () => {
       sidebarWidth: 252,
       mcpGuideStep: 0,
       sessionRefreshReminderAt: null,
+      conversationHistory: [],
     });
     store.update({
       language: "zh-CN",
@@ -49,6 +51,7 @@ test("launcher state persists standalone preferences atomically", () => {
       sidebarWidth: 252,
       mcpGuideStep: 0,
       sessionRefreshReminderAt: null,
+      conversationHistory: [],
     });
     if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o077, 0);
     assert.equal(fs.readdirSync(root).some(name => name.includes(".tmp-")), false);
@@ -99,6 +102,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       sidebarWidth: 252,
       mcpGuideStep: 0,
       sessionRefreshReminderAt: null,
+      conversationHistory: [],
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -110,4 +114,34 @@ test("session refresh reminders are deferred by exactly 48 hours", () => {
   assert.equal(SESSION_REFRESH_REMINDER_INTERVAL_MS, 48 * 60 * 60 * 1000);
   assert.equal(nextSessionRefreshReminderAt(now), "2026-08-07T12:00:00.000Z");
   assert.throws(() => nextSessionRefreshReminderAt(Number.NaN), /must be finite/);
+});
+
+test("conversation history is deduplicated by ChatGPT conversation id and keeps the newest first", () => {
+  let history = upsertConversationHistory([], {
+    id: "019ff1b5-0747-7bc0-8871-977533a91227",
+    title: "First title - ChatGPT",
+    visitedAt: "2026-08-12T01:00:00.000Z",
+  });
+  history = upsertConversationHistory(history, {
+    id: "019ff1b5-0747-7bc0-8871-977533a95555",
+    title: "Second title",
+    visitedAt: "2026-08-12T02:00:00.000Z",
+  });
+  history = upsertConversationHistory(history, {
+    id: "019ff1b5-0747-7bc0-8871-977533a91227",
+    title: "ChatGPT",
+    visitedAt: "2026-08-12T03:00:00.000Z",
+  });
+  assert.deepEqual(history, [
+    {
+      id: "019ff1b5-0747-7bc0-8871-977533a91227",
+      title: "First title",
+      visitedAt: "2026-08-12T03:00:00.000Z",
+    },
+    {
+      id: "019ff1b5-0747-7bc0-8871-977533a95555",
+      title: "Second title",
+      visitedAt: "2026-08-12T02:00:00.000Z",
+    },
+  ]);
 });

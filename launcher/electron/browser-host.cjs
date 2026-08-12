@@ -14,6 +14,7 @@ const {
   LUNA_TOOL_BINDING_ACK,
   NORMAL_CHAT_URL,
   SESSION_MEMORY_BOUNDARY_ACK,
+  conversationIdFromUrl,
   isTemporaryChatUrl,
   memoryBoundaryPrompt,
   toolBindingPrompt,
@@ -276,6 +277,7 @@ class BrowserHost {
     logger,
     loginWithSystemBrowser,
     publishState,
+    recordConversation,
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
@@ -292,6 +294,7 @@ class BrowserHost {
     this.logger = logger;
     this.loginWithSystemBrowser = loginWithSystemBrowser;
     this.publishState = publishState;
+    this.recordConversation = recordConversation;
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
     this.surfaceId = randomBytes(24).toString("base64url");
@@ -580,12 +583,15 @@ class BrowserHost {
       this.setState({ loading: false });
     });
     contents.on("page-title-updated", (_event, title) => {
-      this.setState({ title: typeof title === "string" && title.trim() ? title.trim() : "ChatGPT" });
+      const nextTitle = typeof title === "string" && title.trim() ? title.trim() : "ChatGPT";
+      this.setState({ title: nextTitle });
+      this.rememberConversation(contents.getURL(), nextTitle);
     });
     contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
       if (mainFrame) {
         this.setState({ url });
         if (webSessionIdFromUrl(url)) {
+          this.rememberConversation(url, this.state.title);
           void contents.executeJavaScript(
             `localStorage.setItem("webgpt.last_conversation_url", ${JSON.stringify(url)})`, true,
           ).catch(() => {});
@@ -992,6 +998,12 @@ class BrowserHost {
     return this.snapshot();
   }
 
+  rememberConversation(url, title) {
+    const id = conversationIdFromUrl(url);
+    if (!id || typeof this.recordConversation !== "function") return;
+    this.recordConversation({ id, title, visitedAt: new Date().toISOString() });
+  }
+
   async openLastConversationOrHome() {
     const contents = this.view.webContents;
     this.restoringSession = true;
@@ -1027,6 +1039,20 @@ class BrowserHost {
         throw new Error("ChatGPT did not open a blank new conversation");
       }
       await this.ensureSessionBootstrap();
+      return this.snapshot();
+    });
+  }
+
+  async openConversation(conversationId) {
+    const url = `${CHATGPT_ORIGIN}/c/${conversationId}`;
+    if (conversationIdFromUrl(url) !== conversationId) throw new Error("ChatGPT conversation id is invalid");
+    return await this.withManualOperation("open ChatGPT conversation", async () => {
+      const contents = this.view.webContents;
+      this.setState({ status: "loading", message: "Opening ChatGPT conversation", loading: true });
+      await contents.loadURL(url);
+      this.show();
+      await this.waitForAuthenticated();
+      this.rememberConversation(contents.getURL(), this.state.title);
       return this.snapshot();
     });
   }

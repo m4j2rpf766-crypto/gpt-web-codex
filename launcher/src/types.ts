@@ -17,6 +17,13 @@ export interface LauncherState {
   mcpRuntimeInstalled?: boolean;
   mcpGuideStep: number;
   sessionRefreshReminderAt: string | null;
+  conversationHistory: ConversationHistoryEntry[];
+}
+
+export interface ConversationHistoryEntry {
+  id: string;
+  title: string;
+  visitedAt: string;
 }
 
 export interface BrowserState {
@@ -109,6 +116,7 @@ export interface LauncherApi {
   showBrowser(): Promise<BrowserState>;
   hideBrowser(): Promise<BrowserState>;
   newConversation(): Promise<BrowserState>;
+  openConversation(conversationId: string): Promise<BrowserState>;
   navigateBrowser(action: "back" | "forward" | "reload"): Promise<BrowserState>;
   zoomBrowser(action: "in" | "out" | "reset"): Promise<BrowserState>;
   selectBrowserTab(tabId: string): Promise<BrowserState>;

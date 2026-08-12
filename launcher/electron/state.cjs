@@ -3,6 +3,8 @@ const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 420;
 const SESSION_REFRESH_REMINDER_INTERVAL_MS = 48 * 60 * 60 * 1000;
+const MAX_CONVERSATION_HISTORY = 50;
+const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9_-]{8,256}$/;
 
 const DEFAULT_STATE = Object.freeze({
   version: 1,
@@ -17,7 +19,56 @@ const DEFAULT_STATE = Object.freeze({
   sidebarWidth: 252,
   mcpGuideStep: 0,
   sessionRefreshReminderAt: null,
+  conversationHistory: [],
 });
+
+function normalizeConversationTitle(value) {
+  if (typeof value !== "string") return null;
+  const title = value.replace(/\s+/g, " ").trim().replace(/\s*[-–—]\s*ChatGPT$/i, "").trim();
+  if (!title || title.length > 240) return null;
+  return title;
+}
+
+function sanitizeConversationHistory(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const id = typeof candidate.id === "string" && CONVERSATION_ID_PATTERN.test(candidate.id)
+      ? candidate.id
+      : null;
+    const title = normalizeConversationTitle(candidate.title);
+    const visitedAt = typeof candidate.visitedAt === "string" && Number.isFinite(Date.parse(candidate.visitedAt))
+      ? candidate.visitedAt
+      : null;
+    if (!id || !title || !visitedAt || seen.has(id)) continue;
+    seen.add(id);
+    result.push({ id, title, visitedAt });
+    if (result.length >= MAX_CONVERSATION_HISTORY) break;
+  }
+  return result;
+}
+
+function upsertConversationHistory(history, conversation) {
+  const current = sanitizeConversationHistory(history);
+  const id = typeof conversation?.id === "string" && CONVERSATION_ID_PATTERN.test(conversation.id)
+    ? conversation.id
+    : null;
+  const visitedAt = typeof conversation?.visitedAt === "string"
+    && Number.isFinite(Date.parse(conversation.visitedAt))
+    ? conversation.visitedAt
+    : null;
+  if (!id || !visitedAt) throw new Error("Conversation history entry is invalid");
+  const existing = current.find(entry => entry.id === id);
+  const incomingTitle = normalizeConversationTitle(conversation.title);
+  const genericTitle = !incomingTitle || /^ChatGPT(?: conversation)?$/i.test(incomingTitle);
+  const title = genericTitle && existing ? existing.title : (incomingTitle || `Conversation ${id.slice(0, 8)}`);
+  return [
+    { id, title, visitedAt },
+    ...current.filter(entry => entry.id !== id),
+  ].slice(0, MAX_CONVERSATION_HISTORY);
+}
 
 function nextSessionRefreshReminderAt(now = Date.now()) {
   if (!Number.isFinite(now)) throw new Error("Session refresh reminder time must be finite");
@@ -41,6 +92,7 @@ function readState(filePath) {
       sidebarWidth: parsed.sidebarWidth,
       mcpGuideStep: parsed.mcpGuideStep,
       sessionRefreshReminderAt: parsed.sessionRefreshReminderAt,
+      conversationHistory: sanitizeConversationHistory(parsed.conversationHistory),
       ...(parsed.coreSetupComplete === undefined ? {} : { coreSetupComplete: parsed.coreSetupComplete }),
       ...(parsed.mcpSetupComplete === undefined ? {} : { mcpSetupComplete: parsed.mcpSetupComplete }),
       ...(parsed.mcpRuntimeInstalled === undefined ? {} : { mcpRuntimeInstalled: parsed.mcpRuntimeInstalled }),
@@ -121,10 +173,13 @@ function createStateStore(filePath) {
 }
 
 module.exports = {
+  MAX_CONVERSATION_HISTORY,
   SESSION_REFRESH_REMINDER_INTERVAL_MS,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   createStateStore,
   nextSessionRefreshReminderAt,
+  sanitizeConversationHistory,
+  upsertConversationHistory,
   validateSidebarState,
 };

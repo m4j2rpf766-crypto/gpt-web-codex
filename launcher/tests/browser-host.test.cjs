@@ -848,6 +848,44 @@ test("the explicit new-conversation action opens a blank chat and performs the o
   assert.equal(result.url, "https://chatgpt.com/");
 });
 
+test("a saved conversation opens its exact ChatGPT URL without initial binding", async () => {
+  let currentUrl = "https://chatgpt.com/";
+  const calls = [];
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    state: { title: "Saved conversation" },
+    view: {
+      webContents: {
+        getURL: () => currentUrl,
+        loadURL: async url => { calls.push(["load", url]); currentUrl = url; },
+      },
+    },
+    withManualOperation: async (name, action) => { calls.push(["operation", name]); return await action(); },
+    setState: patch => calls.push(["state", patch]),
+    show: () => calls.push(["show"]),
+    waitForAuthenticated: async () => calls.push(["authenticated"]),
+    rememberConversation: (url, title) => calls.push(["remember", url, title]),
+    snapshot: () => ({ url: currentUrl }),
+  });
+
+  const id = "019ff1b5-0747-7bc0-8871-977533a91227";
+  const result = await BrowserHost.prototype.openConversation.call(fixture, id);
+
+  assert.deepEqual(calls, [
+    ["operation", "open ChatGPT conversation"],
+    ["state", { status: "loading", message: "Opening ChatGPT conversation", loading: true }],
+    ["load", `https://chatgpt.com/c/${id}`],
+    ["show"],
+    ["authenticated"],
+    ["remember", `https://chatgpt.com/c/${id}`, "Saved conversation"],
+  ]);
+  assert.equal(result.url, `https://chatgpt.com/c/${id}`);
+  assert.equal(calls.some(call => call.includes("bootstrap")), false);
+  await assert.rejects(
+    () => BrowserHost.prototype.openConversation.call(fixture, "not valid"),
+    /invalid/,
+  );
+});
+
 test("temporary chat is replaced with normal chat before any visible session declaration", async () => {
   let currentUrl = "https://chatgpt.com/?temporary-chat=true";
   const loads = [];
