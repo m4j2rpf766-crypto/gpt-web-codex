@@ -356,7 +356,7 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
       workspacePath: root,
       permissionMode: "workspace-write",
       model: "gpt-5.6-luna",
-      reasoning: "high",
+      reasoning: "low",
       fast: true,
       timeoutMs: 900_000,
       sessionPolicyVersion: 1,

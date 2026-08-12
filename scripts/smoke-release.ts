@@ -59,9 +59,12 @@ try {
       throw new Error("file_read must not mount the image-preview widget for text results");
     }
     const initReasoning = tools.tools.find(tool => tool.name === "codexluna_init")
-      ?.inputSchema.properties?.reasoning_effort as { enum?: unknown[] } | undefined;
+      ?.inputSchema.properties?.reasoning_effort as { enum?: unknown[]; default?: unknown } | undefined;
     if (!initReasoning?.enum?.includes("none")) {
       throw new Error("codexluna_init does not expose reasoning_effort=none");
+    }
+    if (initReasoning.default !== "low") {
+      throw new Error("codexluna_init does not default reasoning_effort to low");
     }
   } finally {
     await client.close();

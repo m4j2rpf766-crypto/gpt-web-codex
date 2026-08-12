@@ -192,7 +192,7 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
       web_session_id: sessionId.optional(),
       workspace_path: z.string().min(1).max(16_384),
       model: z.string().min(1).max(200).default("gpt-5.6-luna"),
-      reasoning_effort: reasoning.default("high"),
+      reasoning_effort: reasoning.default("low"),
       fast: z.boolean().default(true),
       permission_mode: sandbox.default("workspace-write"),
       timeout_ms: z.number().int().min(1_000).max(86_400_000).default(900_000),

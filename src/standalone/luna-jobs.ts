@@ -114,7 +114,7 @@ export class LunaJobManager {
       imageArtifacts: [],
       cwd,
       model: input.model?.trim() || "gpt-5.6-luna",
-      reasoning: input.reasoning ?? "high",
+      reasoning: input.reasoning ?? "low",
       fast: input.fast ?? true,
       sandbox: input.sandbox ?? "workspace-write",
       timeoutMs: input.timeoutMs ?? 15 * 60_000,
