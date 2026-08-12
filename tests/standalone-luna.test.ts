@@ -28,6 +28,36 @@ function sampleJob(root: string): LunaJob {
   };
 }
 
+function completedCodexProcess(cwd: string, lunaSessionId?: string, delayMs = 10) {
+  const script = [
+    "process.stdin.resume();",
+    ...(lunaSessionId ? [`console.log(JSON.stringify({type:'thread.started',thread_id:${JSON.stringify(lunaSessionId)}}));`] : []),
+    `setTimeout(()=>{console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));console.log(JSON.stringify({type:'turn.completed'}));},${delayMs});`,
+  ].join("");
+  return spawn(process.execPath, ["-e", script], { cwd, stdio: ["pipe", "pipe", "pipe"] });
+}
+
+async function inspectBindingThroughFreshMcp(statePath: string, webSessionId: string) {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["src/cli.ts", "mcp", "--state-path", statePath],
+    cwd: process.cwd(),
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "webgpt-persistence-test", version: "1.0.0" });
+  try {
+    await client.connect(transport);
+    const response = await client.callTool({
+      name: "codexluna_session",
+      arguments: { web_session_id: webSessionId },
+    });
+    if (response.isError) throw new Error(JSON.stringify(response.structuredContent));
+    return response.structuredContent as { binding: { webSessionId: string; lunaSessionId?: string } };
+  } finally {
+    await client.close();
+  }
+}
+
 test("Codex invocation ignores routing config and reads prompt from stdin", () => {
   const root = mkdtempSync(join(tmpdir(), "webgpt-command-"));
   try {
@@ -72,6 +102,106 @@ test("same web session serializes jobs and resumes the durable Luna session", as
     expect(invocations[1]).toContain("luna-thread-1");
     expect(store.binding("conversation-123")?.lunaSessionId).toBe("luna-thread-1");
     expect(readFileSync(manager.get(first.id).logPath, "utf8")).toContain("turn.completed");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("recreated Luna manager resumes one web session while isolating another", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-restart-binding-"));
+  const statePath = join(root, "state.json");
+  const sessionA = "chatgpt:conversation-session-a";
+  const sessionB = "chatgpt:conversation-session-b";
+  try {
+    const firstInvocations: string[][] = [];
+    const firstManager = new LunaJobManager(
+      new LunaStateStore(statePath),
+      (_command, args, cwd) => {
+        firstInvocations.push(args);
+        return completedCodexProcess(cwd, "luna-thread-a");
+      },
+      join(root, "logs-first"),
+    );
+    const first = firstManager.start({ webSessionId: sessionA, prompt: "first", cwd: root });
+    await eventually(() => firstManager.get(first.id).status === "completed");
+    firstManager.shutdown();
+    expect(firstInvocations[0]).not.toContain("resume");
+
+    const restartedInvocations: string[][] = [];
+    const restartedManager = new LunaJobManager(
+      new LunaStateStore(statePath),
+      (_command, args, cwd) => {
+        restartedInvocations.push(args);
+        return completedCodexProcess(cwd, args.includes("resume") ? undefined : "luna-thread-b");
+      },
+      join(root, "logs-restarted"),
+    );
+    const resumed = restartedManager.start({ webSessionId: sessionA, prompt: "resume A", cwd: root });
+    await eventually(() => restartedManager.get(resumed.id).status === "completed");
+    const separate = restartedManager.start({ webSessionId: sessionB, prompt: "start B", cwd: root });
+    await eventually(() => restartedManager.get(separate.id).status === "completed");
+    restartedManager.shutdown();
+
+    expect(restartedInvocations[0]).toContain("resume");
+    expect(restartedInvocations[0]).toContain("luna-thread-a");
+    expect(restartedInvocations[1]).not.toContain("resume");
+    const reloaded = new LunaStateStore(statePath);
+    expect(reloaded.binding(sessionA)?.lunaSessionId).toBe("luna-thread-a");
+    expect(reloaded.binding(sessionB)?.lunaSessionId).toBe("luna-thread-b");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("two fresh MCP processes recover the same persisted web-to-Luna binding", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-mcp-restart-"));
+  const statePath = join(root, "state.json");
+  const webSessionId = "chatgpt:conversation-mcp-restart";
+  try {
+    const store = new LunaStateStore(statePath);
+    store.bindLunaSession(webSessionId, "luna-thread-persisted");
+    const firstProcess = await inspectBindingThroughFreshMcp(statePath, webSessionId);
+    const secondProcess = await inspectBindingThroughFreshMcp(statePath, webSessionId);
+    expect(firstProcess.binding).toMatchObject({ webSessionId, lunaSessionId: "luna-thread-persisted" });
+    expect(secondProcess.binding).toEqual(firstProcess.binding);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("failed, timed-out, and interrupted jobs preserve their Luna binding", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-binding-failures-"));
+  const statePath = join(root, "state.json");
+  const webSessionId = "chatgpt:conversation-failure";
+  try {
+    const store = new LunaStateStore(statePath);
+    store.bindLunaSession(webSessionId, "luna-thread-survives");
+    const failing = new LunaJobManager(store, (_command, _args, cwd) => {
+      const script = "process.stdin.resume();process.stderr.write('synthetic failure');process.exitCode=1;";
+      return spawn(process.execPath, ["-e", script], { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    }, join(root, "logs-failed"));
+    const failedJob = failing.start({ webSessionId, prompt: "fail", cwd: root });
+    await eventually(() => failing.get(failedJob.id).status === "failed");
+    expect(store.binding(webSessionId)?.lunaSessionId).toBe("luna-thread-survives");
+    failing.shutdown();
+
+    const timingOut = new LunaJobManager(new LunaStateStore(statePath), (_command, _args, cwd) => {
+      const script = "process.stdin.resume();setInterval(()=>{},1000);";
+      return spawn(process.execPath, ["-e", script], { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    }, join(root, "logs-timeout"));
+    const timedOutJob = timingOut.start({ webSessionId, prompt: "timeout", cwd: root, timeoutMs: 1_000 });
+    await eventually(() => timingOut.get(timedOutJob.id).status === "timed_out", 5_000);
+    expect(timingOut.store.binding(webSessionId)?.lunaSessionId).toBe("luna-thread-survives");
+    timingOut.shutdown();
+
+    const interruptedStore = new LunaStateStore(statePath);
+    const interrupted = { ...sampleJob(root), id: "interrupted-job", webSessionId, status: "running" as const };
+    interruptedStore.putJob(interrupted);
+    const recovered = new LunaJobManager(interruptedStore, undefined, join(root, "logs-recovered"));
+    expect(recovered.get(interrupted.id).status).toBe("failed");
+    expect(recovered.get(interrupted.id).terminalEvent).toBe("runtime_restarted");
+    expect(recovered.store.binding(webSessionId)?.lunaSessionId).toBe("luna-thread-survives");
+    recovered.shutdown();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

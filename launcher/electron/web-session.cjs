@@ -9,6 +9,7 @@ function conversationIdFromUrl(value) {
   if (url.origin !== CHATGPT_ORIGIN) return null;
   const segments = url.pathname.split("/").filter(Boolean);
   const marker = segments.lastIndexOf("c");
+  if (marker < 0 || marker !== segments.length - 2) return null;
   const id = marker >= 0 ? segments[marker + 1] : undefined;
   return id && /^[A-Za-z0-9_-]{8,256}$/.test(id) ? id : null;
 }

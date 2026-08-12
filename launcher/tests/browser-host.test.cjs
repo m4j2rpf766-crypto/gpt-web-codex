@@ -719,6 +719,75 @@ test("launcher delegates model turns while owning visible normal-chat bootstrap"
   assert.equal(helperCall.appName, "WebGPT Luna");
 });
 
+test("launcher restores only a valid persisted normal conversation URL", async () => {
+  const loads = [];
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    restoringSession: false,
+    view: {
+      webContents: {
+        loadURL: async url => loads.push(url),
+        executeJavaScript: async () => "https://chatgpt.com/c/019ff1b5-0747-7bc0-8871-977533a91227",
+      },
+    },
+  });
+  await BrowserHost.prototype.openLastConversationOrHome.call(fixture);
+  assert.deepEqual(loads, [
+    "https://chatgpt.com/",
+    "https://chatgpt.com/c/019ff1b5-0747-7bc0-8871-977533a91227",
+  ]);
+  assert.equal(fixture.restoringSession, false);
+
+  loads.length = 0;
+  fixture.view.webContents.executeJavaScript = async () => "https://chatgpt.com/share/not-a-normal-chat";
+  await BrowserHost.prototype.openLastConversationOrHome.call(fixture);
+  assert.deepEqual(loads, ["https://chatgpt.com/"]);
+});
+
+test("existing conversation bootstrap is idempotent and a new chat receives its exact stable binding", async () => {
+  const existingPrompts = [];
+  const existing = Object.assign(Object.create(BrowserHost.prototype), {
+    sessionBootstrapOperation: null,
+    view: {
+      webContents: {
+        getURL: () => "https://chatgpt.com/c/019ff1b5-0747-7bc0-8871-977533a91227",
+        executeJavaScript: async script => script.includes("localStorage.getItem") ? true : null,
+      },
+    },
+    submitVisibleHomePrompt: async prompt => existingPrompts.push(prompt),
+  });
+  await BrowserHost.prototype.ensureSessionBootstrap.call(existing);
+  assert.deepEqual(existingPrompts, []);
+  assert.equal(existing.sessionBootstrapOperation, null);
+
+  let currentUrl = "https://chatgpt.com/";
+  const prompts = [];
+  const scripts = [];
+  const states = [];
+  const fresh = Object.assign(Object.create(BrowserHost.prototype), {
+    sessionBootstrapOperation: null,
+    view: {
+      webContents: {
+        getURL: () => currentUrl,
+        executeJavaScript: async script => { scripts.push(script); return null; },
+      },
+    },
+    logger: { info() {} },
+    setState: patch => states.push(patch),
+    submitVisibleHomePrompt: async prompt => {
+      prompts.push(prompt);
+      if (prompts.length === 1) currentUrl = "https://chatgpt.com/c/019ff1b5-0747-7bc0-8871-977533a91227";
+    },
+    waitForVisibleAcknowledgement: async () => {},
+  });
+  await BrowserHost.prototype.ensureSessionBootstrap.call(fresh);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0], /SESSION_MEMORY_BOUNDARY_ACK/);
+  assert.match(prompts[1], /chatgpt:019ff1b5-0747-7bc0-8871-977533a91227/);
+  assert.equal(scripts.some(script => script.includes("webgpt.boundary.chatgpt:019ff1b5-0747-7bc0-8871-977533a91227")), true);
+  assert.equal(states.at(-1).status, "ready");
+  assert.equal(fresh.sessionBootstrapOperation, null);
+});
+
 test("browser helper operations fail closed when the configured connector name is invalid", async () => {
   let helperCalls = 0;
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
