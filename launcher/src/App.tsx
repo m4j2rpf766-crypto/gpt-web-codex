@@ -22,7 +22,7 @@ const text = {
     connect: "Connect MCP", logs: "Recent runtime events", openLogs: "Open log folder", clearError: "Dismiss",
     keepRunning: "Keep MCP running when this window closes", language: "Language", status: "Status",
     connectorHint: "Create or enable this connector in ChatGPT with Tunnel transport and Authentication None.",
-    noRoutes: "Codex configuration and routing are never modified.", refresh: "Refresh", checking: "Working…",
+    refresh: "Refresh", checking: "Working…",
   },
   "zh-CN": {
     dashboard: "概览", mcp: "MCP", activity: "活动", settings: "设置",
@@ -34,7 +34,7 @@ const text = {
     connect: "连接 MCP", logs: "最近运行事件", openLogs: "打开日志目录", clearError: "关闭",
     keepRunning: "关闭窗口后继续运行 MCP", language: "语言", status: "状态",
     connectorHint: "在 ChatGPT 中创建或启用此连接器，连接方式选择隧道，身份验证选择无。",
-    noRoutes: "绝不修改 Codex 配置或路由。", refresh: "刷新", checking: "处理中…",
+    refresh: "刷新", checking: "处理中…",
   },
 } as const;
 
@@ -126,7 +126,7 @@ function Dashboard({ copy, snapshot, busy, setError, updateState }: PanelProps) 
         <StatusCard title={copy.noBrowser} value="Chrome / Edge / Firefox" tone="ready" />
       </div>
       <div className="pure-card pure-callout">
-        <div><h3>{copy.noBrowser}</h3><p>{copy.noBrowserDetail}</p><small>{copy.noRoutes}</small></div>
+        <div><h3>{copy.noBrowser}</h3><p>{copy.noBrowserDetail}</p></div>
         <div className="pure-actions">
           <button className="primary" onClick={() => void api!.openExternal(snapshot.urls.connectors)}>{copy.openChat}</button>
           <button disabled={busy} onClick={() => void runDoctor()}>{busy ? copy.checking : copy.verify}</button>

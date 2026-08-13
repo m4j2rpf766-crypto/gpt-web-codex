@@ -1,6 +1,6 @@
 {
   "name": "gpt-web-codex-launcher",
-  "version": "2.2.4",
+  "version": "2.2.5",
   "private": true,
   "description": "Desktop control center for ChatGPT Web planning and standalone Luna execution",
   "author": "miuuyy",
