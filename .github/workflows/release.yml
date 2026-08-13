@@ -94,7 +94,6 @@ jobs:
           cp LICENSE release-assets/LICENSE
           cp LICENSES/Bun-1.3.14.md release-assets/Bun-1.3.14.md
           cp dist/THIRD_PARTY_NOTICES.txt release-assets/THIRD_PARTY_NOTICES.txt
-          cp scripts/install.sh release-assets/install.sh
           cp scripts/install-launcher.sh release-assets/install-launcher.sh
           cp scripts/install-launcher.ps1 release-assets/install-launcher.ps1
           cp assets/demo.gif "release-assets/gpt-web-codex-${GITHUB_REF_NAME#v}-demo.gif"

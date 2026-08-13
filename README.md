@@ -1,5 +1,9 @@
 # GPT Web Codex
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
+[![CI](https://github.com/m4j2rpf766-crypto/gpt-web-codex/actions/workflows/ci.yml/badge.svg)](https://github.com/m4j2rpf766-crypto/gpt-web-codex/actions/workflows/ci.yml)
+
 GPT Web Codex is a pure MCP launcher. A normal ChatGPT Web conversation is the planner; Luna executes and verifies local work through `codex exec --json` without changing Codex configuration or routing.
 
 ## What it does
@@ -34,11 +38,11 @@ OpenAI Tunnel → standalone local MCP runtime
 
 ## Development
 
-Requirements: Windows, Codex CLI, a ChatGPT account with custom connectors, and an OpenAI Tunnel for MCP. The packaged launcher includes Bun.
+Requirements: Windows, Codex CLI, a ChatGPT account with custom connectors, and an OpenAI Tunnel for MCP. The packaged launcher includes Bun; building from source requires Bun 1.3.14.
 
 ```powershell
-git clone https://github.com/miuuyy/codex-chatgpt-web.git
-cd codex-chatgpt-web
+git clone https://github.com/m4j2rpf766-crypto/gpt-web-codex.git
+cd gpt-web-codex
 bun install --frozen-lockfile
 bun run launcher:dev
 ```
@@ -69,3 +73,7 @@ This is an independent, unofficial local MCP connector. It does not automate Cha
 ## License
 
 MIT. See [LICENSE](LICENSE) and [LICENSES](LICENSES).
+
+## Acknowledgements
+
+GPT Web Codex is based on and evolved from the original [miuuyy/codex-chatgpt-web](https://github.com/miuuyy/codex-chatgpt-web) project. Sincere thanks to miuuyy and every original contributor for making this work possible.

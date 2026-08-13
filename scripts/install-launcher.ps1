@@ -22,7 +22,7 @@ function Invoke-WithRetry {
   }
 }
 
-$Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY } else { "miuuyy/codex-chatgpt-web" }
+$Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY } else { "m4j2rpf766-crypto/gpt-web-codex" }
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
   throw "Invalid GitHub repository: $Repository"
 }
