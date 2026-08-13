@@ -63,7 +63,7 @@ async function inspectBindingThroughFreshMcp(statePath: string, webSessionId: st
 test("Codex invocation ignores routing config and reads prompt from stdin", () => {
   const root = mkdtempSync(join(tmpdir(), "webgpt-command-"));
   try {
-    const invocation = buildCodexInvocation(sampleJob(root), undefined, "C:\\codex.exe");
+    const invocation = buildCodexInvocation(sampleJob(root), undefined, "C:\\codex.exe", "win32");
     expect(invocation.args).toContain("--ignore-user-config");
     expect(invocation.args).toContain("--json");
     expect(invocation.args.at(-1)).toBe("-");
@@ -117,7 +117,7 @@ test("same web session serializes jobs and resumes the durable Luna session", as
       maximumRunning = Math.max(maximumRunning, running);
       child.once("close", () => { running -= 1; });
       return child;
-    }, join(root, "logs"));
+    }, join(root, "logs"), process.execPath);
     const first = manager.start({ webSessionId: "conversation-123", prompt: "first", cwd: root });
     const second = manager.start({ webSessionId: "conversation-123", prompt: "second", cwd: root });
     await eventually(() => manager.get(second.id).status === "completed");
@@ -147,7 +147,7 @@ test("image-preview Luna tasks persist verified local image artifacts without cl
       ];
       const script = `process.stdin.resume();${events.map(event => `console.log(${JSON.stringify(JSON.stringify(event))});`).join("")}process.exitCode=0;`;
       return spawn(process.execPath, ["-e", script], { cwd, stdio: ["pipe", "pipe", "pipe"] });
-    }, join(root, "logs"));
+    }, join(root, "logs"), process.execPath);
     const job = manager.start({ webSessionId: "image-session-123", prompt: "显示最新的图片", cwd: root });
     await eventually(() => manager.get(job.id).status === "completed");
     expect(manager.get(job.id).wantsImagePreview).toBe(true);
@@ -174,6 +174,7 @@ test("recreated Luna manager resumes one web session while isolating another", a
         return completedCodexProcess(cwd, "luna-thread-a");
       },
       join(root, "logs-first"),
+      process.execPath,
     );
     const first = firstManager.start({ webSessionId: sessionA, prompt: "first", cwd: root });
     await eventually(() => firstManager.get(first.id).status === "completed");
@@ -188,6 +189,7 @@ test("recreated Luna manager resumes one web session while isolating another", a
         return completedCodexProcess(cwd, args.includes("resume") ? undefined : "luna-thread-b");
       },
       join(root, "logs-restarted"),
+      process.execPath,
     );
     const resumed = restartedManager.start({ webSessionId: sessionA, prompt: "resume A", cwd: root });
     await eventually(() => restartedManager.get(resumed.id).status === "completed");
@@ -232,7 +234,7 @@ test("failed, timed-out, and interrupted jobs preserve their Luna binding", asyn
     const failing = new LunaJobManager(store, (_command, _args, cwd) => {
       const script = "process.stdin.resume();process.stderr.write('synthetic failure');process.exitCode=1;";
       return spawn(process.execPath, ["-e", script], { cwd, stdio: ["pipe", "pipe", "pipe"] });
-    }, join(root, "logs-failed"));
+    }, join(root, "logs-failed"), process.execPath);
     const failedJob = failing.start({ webSessionId, prompt: "fail", cwd: root });
     await eventually(() => failing.get(failedJob.id).status === "failed");
     expect(store.binding(webSessionId)?.lunaSessionId).toBe("luna-thread-survives");
@@ -241,7 +243,7 @@ test("failed, timed-out, and interrupted jobs preserve their Luna binding", asyn
     const timingOut = new LunaJobManager(new LunaStateStore(statePath), (_command, _args, cwd) => {
       const script = "process.stdin.resume();setInterval(()=>{},1000);";
       return spawn(process.execPath, ["-e", script], { cwd, stdio: ["pipe", "pipe", "pipe"] });
-    }, join(root, "logs-timeout"));
+    }, join(root, "logs-timeout"), process.execPath);
     const timedOutJob = timingOut.start({ webSessionId, prompt: "timeout", cwd: root, timeoutMs: 1_000 });
     await eventually(() => timingOut.get(timedOutJob.id).status === "timed_out", 5_000);
     expect(timingOut.store.binding(webSessionId)?.lunaSessionId).toBe("luna-thread-survives");
@@ -271,8 +273,9 @@ test("direct files enforce the disclosed workspace and permission mode", () => {
     expect("text" in textFile ? textFile.text : null).toBe("hello");
     expect(tools.search("hell", ".", workspace, "workspace-write").matches[0]?.line).toBe(1);
     expect(() => tools.write("blocked.txt", "x", workspace, "read-only")).toThrow("read-only");
-    expect(() => resolveScopedPath("..\\outside.txt", workspace, "workspace-write")).toThrow("outside");
-    expect(resolveScopedPath("..\\outside.txt", workspace, "danger-full-access")).toBe(join(root, "outside.txt"));
+    const outsidePath = join("..", "outside.txt");
+    expect(() => resolveScopedPath(outsidePath, workspace, "workspace-write")).toThrow("outside");
+    expect(resolveScopedPath(outsidePath, workspace, "danger-full-access")).toBe(join(root, "outside.txt"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

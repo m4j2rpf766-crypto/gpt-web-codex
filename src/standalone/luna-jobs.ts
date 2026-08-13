@@ -76,6 +76,7 @@ export class LunaJobManager {
     readonly store = new LunaStateStore(),
     private readonly spawnCodex: SpawnCodex = defaultSpawn,
     private readonly logDir = defaultStandaloneLogDir(store.path),
+    private readonly codexExecutable?: string,
   ) {
     this.store.recoverInterruptedJobs();
     this.pruneLogs();
@@ -186,7 +187,7 @@ export class LunaJobManager {
       return;
     }
     const binding = this.store.ensureBinding(queued.webSessionId);
-    const invocation = buildCodexInvocation(queued, binding.lunaSessionId);
+    const invocation = buildCodexInvocation(queued, binding.lunaSessionId, this.codexExecutable);
     const child = this.spawnCodex(invocation.command, invocation.args, queued.cwd);
     this.active.set(jobId, child);
     this.store.updateJob(jobId, { status: "running", startedAt: new Date().toISOString(), pid: child.pid, attempts: queued.attempts + 1 });
