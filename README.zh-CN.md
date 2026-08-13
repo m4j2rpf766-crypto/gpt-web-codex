@@ -6,6 +6,8 @@
 
 GPT Web Codex 是一个纯 MCP 启动器。普通 ChatGPT 网页对话负责规划，Luna 通过 `codex exec --json` 在本机执行并验证任务。
 
+> **平台状态：** 目前仅在 Windows 上完成了真实人工测试。Linux 和 macOS 构建会经过自动化 CI，但尚未在这两个操作系统上进行人工实机测试，相关支持应视为实验性功能。
+
 ## 主要功能
 
 - 在用户自己的普通浏览器中使用 ChatGPT；启动器不内嵌或自动控制 ChatGPT。

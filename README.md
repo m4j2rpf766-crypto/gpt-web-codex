@@ -6,6 +6,8 @@
 
 GPT Web Codex is a pure MCP launcher. A normal ChatGPT Web conversation is the planner; Luna executes and verifies local work through `codex exec --json` without changing Codex configuration or routing.
 
+> **Platform status:** Real-world manual testing has currently been completed only on Windows. Linux and macOS builds are covered by automated CI, but have not yet been manually tested on those operating systems; support for them should be considered experimental.
+
 ## What it does
 
 - Uses ChatGPT in the user's normal browser; the launcher never embeds or automates ChatGPT.
