@@ -477,7 +477,7 @@ test("standalone MCP file_read transmits an image content block without base64 d
       arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
     });
     expect(output.content).toEqual([
-      { type: "text", text: JSON.stringify({ path: join(root, "pixel.png"), mime_type: "image/png", bytes: image.length, width: 1, height: 1 }) },
+      { type: "text", text: "Image metadata is available in structuredContent; the image follows as native MCP content." },
       { type: "image", data: image.toString("base64"), mimeType: "image/png" },
     ]);
     expect(JSON.stringify(output.structuredContent)).not.toContain(image.toString("base64"));
@@ -504,6 +504,33 @@ test("standalone MCP file_read transmits an image content block without base64 d
     });
     expect(rejected.isError).toBe(true);
     expect(JSON.stringify(rejected.content)).toContain("not a supported image");
+  } finally {
+    await client.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("structured tool results are not duplicated into text content", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-mcp-structured-only-"));
+  const statePath = join(root, "state.json");
+  const marker = "STRUCTURED_ONLY_MARKER_".repeat(2_000);
+  writeFileSync(join(root, "large.txt"), marker);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["src/cli.ts", "mcp", "--state-path", statePath],
+    cwd: process.cwd(),
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "webgpt-structured-only-test", version: "1.0.0" });
+  try {
+    await client.connect(transport);
+    const output = await client.callTool({
+      name: "file_read",
+      arguments: { path: "large.txt", workspace_path: root, permission_mode: "read-only" },
+    });
+    expect(output.structuredContent).toMatchObject({ path: join(root, "large.txt"), text: marker, truncated: false });
+    expect(JSON.stringify(output.content)).not.toContain("STRUCTURED_ONLY_MARKER_");
+    expect(JSON.stringify(output.content).length).toBeLessThan(160);
   } finally {
     await client.close();
     rmSync(root, { recursive: true, force: true });

@@ -78,6 +78,17 @@ try {
       || Number(imageMetadata.bytes) > 1_500_000 || Number(imageMetadata.width) > 1_600 || Number(imageMetadata.height) > 1_600) {
       throw new Error(`Relocated MCP runtime did not compact a high-resolution image: ${JSON.stringify(imageMetadata)}`);
     }
+    const marker = "STRUCTURED_ONLY_RELEASE_MARKER_".repeat(1_000);
+    const textPath = join(root, "large-result.txt");
+    await Bun.write(textPath, marker);
+    const textResult = await client.callTool({
+      name: "file_read",
+      arguments: { path: textPath, workspace_path: root, permission_mode: "read-only" },
+    });
+    if (JSON.stringify(textResult.structuredContent).includes(marker) === false
+      || JSON.stringify(textResult.content).includes("STRUCTURED_ONLY_RELEASE_MARKER_")) {
+      throw new Error("Relocated MCP runtime duplicated structured data into text content");
+    }
   } finally {
     await client.close();
   }

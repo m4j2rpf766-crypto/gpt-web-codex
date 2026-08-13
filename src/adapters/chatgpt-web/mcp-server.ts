@@ -83,7 +83,12 @@ const terminalOutputSchema = {
 
 function result(value: Record<string, unknown>, isError = false) {
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(value) }],
+    content: [{
+      type: "text" as const,
+      text: isError
+        ? "Tool failed. Read structuredContent for the error details."
+        : "Tool completed. Read structuredContent for the result.",
+    }],
     structuredContent: value,
     ...(isError ? { isError: true } : {}),
   };
@@ -121,7 +126,7 @@ function lunaStatusResult(
   };
   return {
     content: [
-      { type: "text" as const, text: JSON.stringify(structured) },
+      { type: "text" as const, text: "Luna status is available in structuredContent; the image follows as native MCP content." },
       { type: "image" as const, data: preview.data, mimeType: preview.mimeType },
     ],
     structuredContent: structured,
@@ -134,7 +139,7 @@ function fileReadResult(value: Awaited<ReturnType<DirectToolService["readForTran
   const metadata = imageMetadata(value);
   return {
     content: [
-      { type: "text" as const, text: JSON.stringify(metadata) },
+      { type: "text" as const, text: "Image metadata is available in structuredContent; the image follows as native MCP content." },
       { type: "image" as const, data: value.data, mimeType: value.mimeType },
     ],
     structuredContent: metadata,
