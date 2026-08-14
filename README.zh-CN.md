@@ -40,6 +40,15 @@ OpenAI Tunnel → 本机独立 MCP 运行时
           codex exec --json（Luna）
 ```
 
+## 图片预览与页面刷新
+
+- ChatGPT 需要检查本机图片内容时使用 `file_read`，图片会作为原生 MCP 图片内容传输。
+- 需要让图片同时显示在网页对话中时使用 `file_image_preview`，它会创建可见图片卡片。
+- 图片卡片首次成功显示后，浏览器只会保存一个不透明的预览 ID，并按当前 ChatGPT `/c/...` 会话隔离；图片数据仍保存在有数量和时间限制的本机私有缓存中。
+- 页面刷新或重新打开同一对话时，组件会用该 ID 调用私有工具 `file_image_preview_restore`，不会重新读取任意源文件路径。
+- 在刷新恢复格式加入之前创建的旧卡片无法追溯修复，需要重新调用一次 `file_image_preview` 创建可恢复的新卡片。
+- 清除 ChatGPT 站点数据或删除本机预览缓存后，对应卡片将无法恢复。
+
 ## 本地开发
 
 当前需要 Windows、Codex CLI、支持自定义连接器的 ChatGPT 账户，以及用于 MCP 的 OpenAI Tunnel。安装包已经内置 Bun；从源码构建需要 Bun 1.3.14。

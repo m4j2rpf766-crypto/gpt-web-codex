@@ -39,6 +39,15 @@ OpenAI Tunnel → standalone local MCP runtime
           codex exec --json (Luna)
 ```
 
+## Image previews and page refreshes
+
+- Use `file_read` when ChatGPT needs to inspect a local image as native MCP image content.
+- Use `file_image_preview` when the image should also appear as a visible card in the conversation.
+- Each successfully rendered card stores only an opaque preview ID in browser storage, scoped to the current ChatGPT `/c/...` conversation. Image bytes stay in the bounded private local preview cache.
+- When ChatGPT recreates the card after a page refresh or the conversation is reopened, the component calls the private `file_image_preview_restore` tool with that ID. It never rereads an arbitrary source path.
+- Cards created before the refresh-persistence format was introduced cannot be repaired retroactively. Call `file_image_preview` once more to create a restorable card.
+- Clearing ChatGPT site data or deleting the local preview cache removes the information needed for restoration.
+
 ## Development
 
 Requirements: Windows, Codex CLI, a ChatGPT account with custom connectors, and an OpenAI Tunnel for MCP. The packaged launcher includes Bun; building from source requires Bun 1.3.14.
