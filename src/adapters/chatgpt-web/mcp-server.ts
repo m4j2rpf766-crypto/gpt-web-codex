@@ -236,7 +236,7 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
       contents: [{
         uri,
         mimeType: IMAGE_PREVIEW_MIME_TYPE,
-        text: IMAGE_PREVIEW_HTML,
+        text: IMAGE_PREVIEW_HTML.replaceAll("__WEBGPT_PREVIEW_NAMESPACE__", uri),
         _meta: {
           ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
           "openai/widgetDescription": "Displays a verified local image returned by GPT Web Codex directly in the conversation.",

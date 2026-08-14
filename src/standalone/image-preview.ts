@@ -1,5 +1,8 @@
-export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview-v9.html";
+export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview-v12.html";
 export const LEGACY_IMAGE_PREVIEW_RESOURCE_URIS = [
+  "ui://webgpt-luna/image-preview-v11.html",
+  "ui://webgpt-luna/image-preview-v10.html",
+  "ui://webgpt-luna/image-preview-v9.html",
   "ui://webgpt-luna/image-preview-v8.html",
   "ui://webgpt-luna/image-preview-v7.html",
 ] as const;
@@ -51,6 +54,17 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
       let restoringPreviewId = null;
       let pendingRestoreId = null;
       let lastPreviewId = null;
+      let pendingPreviewState = null;
+      const storageNamespace = "__WEBGPT_PREVIEW_NAMESPACE__";
+      const conversationKey = (() => {
+        try {
+          const referrer = new URL(document.referrer);
+          const match = referrer.pathname.match(/\/c\/([^/?#]+)/);
+          return match?.[1] || referrer.pathname || "unknown";
+        } catch { return "unknown"; }
+      })();
+      const ledgerKey = "webgpt-image-preview-ledger:" + storageNamespace + ":" + conversationKey;
+      const claimKey = "webgpt-image-preview-claim:" + storageNamespace + ":" + conversationKey;
 
       const formatBytes = (bytes) => bytes < 1024 ? bytes + " B" : bytes < 1048576 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1048576).toFixed(1) + " MB";
       const walk = (value, match) => {
@@ -108,25 +122,68 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
           pendingRequests.set(id, { resolve, reject, timeout });
         });
       };
+      const flushPreviewState = () => {
+        const api = window.openai;
+        if (!pendingPreviewState || typeof api?.setWidgetState !== "function") return false;
+        try {
+          api.setWidgetState(pendingPreviewState);
+          pendingPreviewState = null;
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const readLedger = () => {
+        try {
+          const value = JSON.parse(window.localStorage.getItem(ledgerKey) || "[]");
+          return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+        } catch { return []; }
+      };
+      const rememberPreview = (previewId) => {
+        if (!previewId) return;
+        try {
+          const ledger = readLedger();
+          if (!ledger.includes(previewId)) {
+            ledger.push(previewId);
+            window.localStorage.setItem(ledgerKey, JSON.stringify(ledger.slice(-100)));
+          }
+        } catch {}
+      };
+      const claimRememberedPreview = () => {
+        const ledger = readLedger();
+        if (!ledger.length) return null;
+        try {
+          const now = Date.now();
+          let claim = JSON.parse(window.sessionStorage.getItem(claimKey) || "null");
+          if (!claim || claim.total !== ledger.length || now - claim.last_claimed_at > 1500 || claim.next_index >= ledger.length) {
+            claim = { total: ledger.length, next_index: 0, last_claimed_at: now };
+          }
+          const previewId = ledger[claim.next_index] || null;
+          claim.next_index += 1;
+          claim.last_claimed_at = now;
+          window.sessionStorage.setItem(claimKey, JSON.stringify(claim));
+          return previewId;
+        } catch { return ledger[0] || null; }
+      };
       const persistPreviewState = (image) => {
-        if (!image?.preview_id || typeof window.openai?.setWidgetState !== "function") return;
-        const snapshot = {
-          privateContent: {
-            webgpt_image_preview: {
-              preview_id: image.preview_id,
-              name: image.name || "image",
-              mime_type: image.mime_type,
-              bytes: image.bytes || 0,
-              width: image.width,
-              height: image.height,
-            },
+        if (!image?.preview_id) return;
+        pendingPreviewState = {
+          webgpt_image_preview: {
+            preview_id: image.preview_id,
+            name: image.name || "image",
+            mime_type: image.mime_type,
+            bytes: image.bytes || 0,
+            width: image.width,
+            height: image.height,
           },
         };
-        try { window.openai.setWidgetState(snapshot); } catch {}
+        if (flushPreviewState()) return;
+        for (const delay of [50, 250, 1000, 2500]) setTimeout(flushPreviewState, delay);
       };
       const renderImage = (image) => {
         if (!image?.data_url) return false;
         lastPreviewId = image.preview_id || lastPreviewId;
+        rememberPreview(lastPreviewId);
         preview.src = image.data_url;
         preview.alt = "Local image preview: " + (image.name || "image");
         name.textContent = image.name || "image";
@@ -152,17 +209,15 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
         retry.disabled = false;
       };
       const callRestoreTool = async (previewId) => {
+        if (typeof window.openai?.callTool === "function") {
+          return await window.openai.callTool("file_image_preview_restore", { preview_id: previewId });
+        }
         try {
           return await request("tools/call", {
             name: "file_image_preview_restore",
             arguments: { preview_id: previewId },
           });
-        } catch (error) {
-          if (typeof window.openai?.callTool === "function") {
-            return await window.openai.callTool("file_image_preview_restore", { preview_id: previewId });
-          }
-          throw error;
-        }
+        } catch (error) { throw error; }
       };
       const restorePreview = async (previewId) => {
         lastPreviewId = previewId;
@@ -213,7 +268,11 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
       preview.addEventListener("load", () => {
         try { window.openai?.notifyIntrinsicHeight?.(); } catch {}
       });
-      window.addEventListener("openai:set_globals", (event) => renderFrom(event.detail?.globals));
+      window.addEventListener("openai:set_globals", (event) => {
+        if (!initialized && window.openai) initialized = true;
+        renderFrom(event.detail?.globals);
+        flushPreviewState();
+      });
       window.addEventListener("message", (event) => {
         if (event.source !== window.parent) return;
         const message = event.data;
@@ -229,24 +288,39 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
         if (message.method === "ui/notifications/tool-result") renderFrom(message.params);
       }, { passive: true });
 
-      renderFrom();
-      request("ui/initialize", {
-        protocolVersion: "2025-06-18",
-        appCapabilities: {},
-        appInfo: { name: "webgpt-image-preview", version: "0.2.0" },
-      }).then(() => {
+      const finishStartup = () => {
         initialized = true;
-        window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized" }, "*");
+        flushPreviewState();
         const restoreId = pendingRestoreId;
         pendingRestoreId = null;
         if (restoreId) void restorePreview(restoreId);
         else renderFrom();
         setTimeout(() => {
           if (!rendered && !restoringPreviewId && !lastPreviewId) {
+            const rememberedPreviewId = claimRememberedPreview();
+            if (rememberedPreviewId) {
+              void restorePreview(rememberedPreviewId);
+              return;
+            }
             statusText.textContent = "图片预览数据不可用，请重新调用图片预览工具。";
           }
         }, 2000);
-      }).catch(showRestoreError);
+      };
+
+      if (window.openai) {
+        renderFrom();
+        finishStartup();
+      } else {
+        renderFrom();
+        request("ui/initialize", {
+          protocolVersion: "2025-06-18",
+          appCapabilities: {},
+          appInfo: { name: "webgpt-image-preview", version: "0.3.0" },
+        }).then(() => {
+          window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized" }, "*");
+          finishStartup();
+        }).catch(showRestoreError);
+      }
     })();
   </script>
 </body>

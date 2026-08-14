@@ -498,7 +498,7 @@ test("standalone MCP file_read transmits an image content block without base64 d
       const legacyPreview = await client.readResource({ uri: legacyUri });
       expect(legacyPreview.contents[0]?.mimeType).toBe(IMAGE_PREVIEW_MIME_TYPE);
       const legacyContent = legacyPreview.contents[0];
-      expect(legacyContent && "text" in legacyContent ? legacyContent.text : "").toBe(previewHtml);
+      expect(legacyContent && "text" in legacyContent ? legacyContent.text : "").toContain(legacyUri);
     }
     const output = await client.callTool({
       name: "file_read",

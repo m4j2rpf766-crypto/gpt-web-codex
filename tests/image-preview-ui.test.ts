@@ -27,7 +27,19 @@ function createElement(): FakeElement {
   };
 }
 
-function mountPreview(openai: Record<string, unknown>) {
+function createStorage() {
+  const values = new Map<string, string>();
+  return {
+    getItem(key: string) { return values.get(key) ?? null; },
+    setItem(key: string, value: string) { values.set(key, value); },
+    removeItem(key: string) { values.delete(key); },
+  };
+}
+
+function mountPreview(
+  openai?: Record<string, unknown>,
+  storage = { localStorage: createStorage(), sessionStorage: createStorage() },
+) {
   const elements = Object.fromEntries(
     ["card", "preview", "name", "detail", "status", "statusText", "retry"].map(id => [id, createElement()]),
   ) as Record<string, FakeElement>;
@@ -37,7 +49,8 @@ function mountPreview(openai: Record<string, unknown>) {
   let nextTimer = 1;
   const timers = new Map<number, () => void>();
   const fakeWindow = {
-    openai,
+    ...(openai ? { openai } : {}),
+    ...storage,
     parent,
     addEventListener(type: string, listener: (event: { source?: unknown; data?: unknown; detail?: unknown }) => void) {
       const current = listeners.get(type) ?? [];
@@ -45,7 +58,10 @@ function mountPreview(openai: Record<string, unknown>) {
       listeners.set(type, current);
     },
   };
-  const fakeDocument = { getElementById(id: string) { return elements[id]; } };
+  const fakeDocument = {
+    referrer: "https://chatgpt.com/c/test-conversation",
+    getElementById(id: string) { return elements[id]; },
+  };
   const script = /<script>([\s\S]*)<\/script>/.exec(IMAGE_PREVIEW_HTML)?.[1];
   if (!script) throw new Error("Image preview script is missing");
   const execute = new Function("window", "document", "setTimeout", "clearTimeout", script);
@@ -64,6 +80,14 @@ function mountPreview(openai: Record<string, unknown>) {
     messages,
     dispatchMessage(data: Record<string, unknown>) {
       for (const listener of listeners.get("message") ?? []) listener({ source: parent, data });
+    },
+    dispatchGlobals(globals: unknown) {
+      for (const listener of listeners.get("openai:set_globals") ?? []) listener({ detail: { globals } });
+    },
+    runTimers() {
+      const callbacks = [...timers.values()];
+      timers.clear();
+      callbacks.forEach(callback => callback());
     },
   };
 }
@@ -96,44 +120,25 @@ test("image preview persists a small widget snapshot and restores after iframe r
     setWidgetState(value: unknown) { widgetState = value; },
   });
   expect(first.elements.preview.src).toBe(dataUrl);
-  expect(JSON.stringify(widgetState)).toContain(previewId);
-  expect(JSON.stringify(widgetState)).not.toContain(dataUrl);
-
-  const initialize = first.messages.find(message => message.method === "ui/initialize");
-  expect(initialize).toMatchObject({
-    method: "ui/initialize",
-    params: {
-      protocolVersion: "2025-06-18",
-      appCapabilities: {},
-      appInfo: { name: "webgpt-image-preview", version: "0.2.0" },
+  expect(widgetState).toEqual({
+    webgpt_image_preview: {
+      preview_id: previewId,
+      name: "refresh.png",
+      mime_type: "image/png",
+      bytes: 5,
+      width: 1,
+      height: 1,
     },
   });
-  expect(initialize?.params).not.toHaveProperty("capabilities");
-  expect(initialize?.params).not.toHaveProperty("clientInfo");
-  first.dispatchMessage({ jsonrpc: "2.0", id: initialize?.id, result: {} });
-  await flushPromises();
 
-  const second = mountPreview({ widgetState });
-  const secondInitialize = second.messages.find(message => message.method === "ui/initialize");
-  expect(secondInitialize).toMatchObject({
-    method: "ui/initialize",
-    params: {
-      protocolVersion: "2025-06-18",
-      appCapabilities: {},
-      appInfo: { name: "webgpt-image-preview", version: "0.2.0" },
-    },
-  });
-  second.dispatchMessage({ jsonrpc: "2.0", id: secondInitialize?.id, result: {} });
-  await flushPromises();
-  const restore = second.messages.find(message => message.method === "tools/call");
-  expect(restore).toMatchObject({
-    method: "tools/call",
-    params: { name: "file_image_preview_restore", arguments: { preview_id: previewId } },
-  });
-  second.dispatchMessage({
-    jsonrpc: "2.0",
-    id: restore?.id,
-    result: {
+  expect(first.messages.some(message => message.method === "ui/initialize")).toBe(false);
+
+  const restoredOpenai = {
+    widgetState,
+    async callTool(name: string, args: unknown) {
+      expect(name).toBe("file_image_preview_restore");
+      expect(args).toEqual({ preview_id: previewId });
+      return {
       structuredContent: { preview_id: previewId, name: "refresh.png", mime_type: "image/png", bytes: 5 },
       _meta: {
         webgpt_image_preview: {
@@ -144,10 +149,100 @@ test("image preview persists a small widget snapshot and restores after iframe r
           data_url: dataUrl,
         },
       },
+      };
+    },
+  };
+  const restored = mountPreview(restoredOpenai);
+  await flushPromises();
+  expect(restored.messages.some(message => message.method === "ui/initialize")).toBe(false);
+  expect(restored.messages.some(message => message.method === "tools/call")).toBe(false);
+  expect(restored.elements.preview.src).toBe(dataUrl);
+  expect(restored.elements.card.hidden).toBe(false);
+  expect(restored.elements.status.hidden).toBe(true);
+});
+
+test("image preview keeps the standard MCP Apps initialization fallback", async () => {
+  const mounted = mountPreview();
+  const initialize = mounted.messages.find(message => message.method === "ui/initialize");
+  expect(initialize).toMatchObject({
+    method: "ui/initialize",
+    params: {
+      protocolVersion: "2025-06-18",
+      appCapabilities: {},
+      appInfo: { name: "webgpt-image-preview", version: "0.3.0" },
     },
   });
+  expect(initialize?.params).not.toHaveProperty("capabilities");
+  expect(initialize?.params).not.toHaveProperty("clientInfo");
+  mounted.dispatchMessage({ jsonrpc: "2.0", id: initialize?.id, result: {} });
   await flushPromises();
-  expect(second.elements.preview.src).toBe(dataUrl);
-  expect(second.elements.card.hidden).toBe(false);
-  expect(second.elements.status.hidden).toBe(true);
+  expect(mounted.messages.some(message => message.method === "ui/notifications/initialized")).toBe(true);
+});
+
+test("standard MCP Apps restore remembered preview ids after iframe recreation", async () => {
+  const previewId = "33333333-3333-4333-8333-333333333333";
+  const storage = { localStorage: createStorage(), sessionStorage: createStorage() };
+  const first = mountPreview(undefined, storage);
+  const firstInitialize = first.messages.find(message => message.method === "ui/initialize");
+  first.dispatchMessage({ jsonrpc: "2.0", id: firstInitialize?.id, result: {} });
+  await flushPromises();
+  first.dispatchMessage({
+    jsonrpc: "2.0",
+    method: "ui/notifications/tool-result",
+    params: {
+      structuredContent: { preview_id: previewId },
+      _meta: {
+        webgpt_image_preview: {
+          preview_id: previewId,
+          name: "remembered.png",
+          mime_type: "image/png",
+          bytes: 5,
+          data_url: "data:image/png;base64,aW1hZ2U=",
+        },
+      },
+    },
+  });
+
+  const second = mountPreview(undefined, storage);
+  const secondInitialize = second.messages.find(message => message.method === "ui/initialize");
+  second.dispatchMessage({ jsonrpc: "2.0", id: secondInitialize?.id, result: {} });
+  await flushPromises();
+  second.runTimers();
+  await flushPromises();
+  expect(second.messages.find(message => message.method === "tools/call")).toMatchObject({
+    params: { name: "file_image_preview_restore", arguments: { preview_id: previewId } },
+  });
+});
+
+test("image preview persists once the ChatGPT widget-state bridge becomes available", () => {
+  const previewId = "22222222-2222-4222-8222-222222222222";
+  let widgetState: unknown;
+  const openai: Record<string, unknown> = {
+    toolResponseMetadata: {
+      mcp_tool_result: {
+        _meta: {
+          webgpt_image_preview: {
+            preview_id: previewId,
+            name: "delayed.png",
+            mime_type: "image/png",
+            bytes: 5,
+            data_url: "data:image/png;base64,aW1hZ2U=",
+          },
+        },
+      },
+    },
+  };
+  const mounted = mountPreview(openai);
+  expect(widgetState).toBeUndefined();
+
+  openai.setWidgetState = (value: unknown) => { widgetState = value; };
+  mounted.dispatchGlobals({});
+  expect(widgetState).toEqual({
+    webgpt_image_preview: {
+      preview_id: previewId,
+      name: "delayed.png",
+      mime_type: "image/png",
+      bytes: 5,
+    },
+  });
 });
