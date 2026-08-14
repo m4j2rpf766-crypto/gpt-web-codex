@@ -1,5 +1,6 @@
-export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview-v8.html";
+export const IMAGE_PREVIEW_RESOURCE_URI = "ui://webgpt-luna/image-preview-v9.html";
 export const LEGACY_IMAGE_PREVIEW_RESOURCE_URIS = [
+  "ui://webgpt-luna/image-preview-v8.html",
   "ui://webgpt-luna/image-preview-v7.html",
 ] as const;
 export const IMAGE_PREVIEW_MIME_TYPE = "text/html;profile=mcp-app";
@@ -231,8 +232,8 @@ export const IMAGE_PREVIEW_HTML = String.raw`<!doctype html>
       renderFrom();
       request("ui/initialize", {
         protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "webgpt-image-preview", version: "0.2.0" },
+        appCapabilities: {},
+        appInfo: { name: "webgpt-image-preview", version: "0.2.0" },
       }).then(() => {
         initialized = true;
         window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized" }, "*");

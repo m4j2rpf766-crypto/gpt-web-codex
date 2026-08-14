@@ -100,11 +100,29 @@ test("image preview persists a small widget snapshot and restores after iframe r
   expect(JSON.stringify(widgetState)).not.toContain(dataUrl);
 
   const initialize = first.messages.find(message => message.method === "ui/initialize");
+  expect(initialize).toMatchObject({
+    method: "ui/initialize",
+    params: {
+      protocolVersion: "2025-06-18",
+      appCapabilities: {},
+      appInfo: { name: "webgpt-image-preview", version: "0.2.0" },
+    },
+  });
+  expect(initialize?.params).not.toHaveProperty("capabilities");
+  expect(initialize?.params).not.toHaveProperty("clientInfo");
   first.dispatchMessage({ jsonrpc: "2.0", id: initialize?.id, result: {} });
   await flushPromises();
 
   const second = mountPreview({ widgetState });
   const secondInitialize = second.messages.find(message => message.method === "ui/initialize");
+  expect(secondInitialize).toMatchObject({
+    method: "ui/initialize",
+    params: {
+      protocolVersion: "2025-06-18",
+      appCapabilities: {},
+      appInfo: { name: "webgpt-image-preview", version: "0.2.0" },
+    },
+  });
   second.dispatchMessage({ jsonrpc: "2.0", id: secondInitialize?.id, result: {} });
   await flushPromises();
   const restore = second.messages.find(message => message.method === "tools/call");
