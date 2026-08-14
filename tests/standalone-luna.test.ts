@@ -336,7 +336,8 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
     const names = listedTools.map(tool => tool.name).sort();
     expect(names).toEqual([
       "codexluna_cancel", "codexluna_init", "codexluna_session", "codexluna_start", "codexluna_status",
-      "file_image_preview", "file_list", "file_read", "file_search", "file_write", "terminal_cancel", "terminal_start", "terminal_status",
+      "file_image_preview", "file_image_preview_restore", "file_list", "file_read", "file_search", "file_write",
+      "terminal_cancel", "terminal_start", "terminal_status",
     ]);
     expect(listedTools.every(tool => tool.outputSchema && typeof tool.outputSchema === "object")).toBe(true);
     expect(listedTools.every(tool => Array.isArray(tool._meta?.securitySchemes))).toBe(true);
@@ -438,9 +439,12 @@ test("completed Luna image status returns native image content and inline previe
     expect(output.structuredContent).toMatchObject({
       status: "completed", image_artifacts: [imagePath], image_preview_rendered: true, image_preview_error: null,
     });
+    const previewId = (output.structuredContent as { image_preview_id: string }).image_preview_id;
+    expect(previewId).toMatch(/^[0-9a-f-]{36}$/);
     const content = output.content as Array<{ type: string; data?: string }>;
     expect(content.some(item => item.type === "image" && item.data === image.toString("base64"))).toBe(true);
     expect(output._meta?.webgpt_image_preview).toEqual({
+      preview_id: previewId,
       name: "luna-preview.png", mime_type: "image/png", bytes: image.length, width: 1, height: 1,
       data_url: `data:image/png;base64,${image.toString("base64")}`,
     });
@@ -469,12 +473,20 @@ test("standalone MCP file_read transmits an image content block without base64 d
     expect(tools.tools.find(tool => tool.name === "file_read")?._meta?.["ui/resourceUri"]).toBeUndefined();
     expect(tools.tools.find(tool => tool.name === "file_image_preview")?._meta?.["openai/outputTemplate"]).toBe(IMAGE_PREVIEW_RESOURCE_URI);
     expect(tools.tools.find(tool => tool.name === "file_image_preview")?._meta?.ui).toEqual({ resourceUri: IMAGE_PREVIEW_RESOURCE_URI, visibility: ["model", "app"] });
+    expect(tools.tools.find(tool => tool.name === "file_image_preview_restore")?._meta?.ui).toEqual({ visibility: ["app"] });
+    expect(tools.tools.find(tool => tool.name === "file_image_preview_restore")?._meta?.["openai/widgetAccessible"]).toBe(true);
+    expect(tools.tools.find(tool => tool.name === "file_image_preview_restore")?._meta?.["openai/visibility"]).toBe("private");
     const resources = await client.listResources();
     expect(resources.resources.some(resource => resource.uri === IMAGE_PREVIEW_RESOURCE_URI)).toBe(true);
     const preview = await client.readResource({ uri: IMAGE_PREVIEW_RESOURCE_URI });
     expect(preview.contents[0]?.mimeType).toBe(IMAGE_PREVIEW_MIME_TYPE);
     const previewContent = preview.contents[0];
-    expect(previewContent && "text" in previewContent ? previewContent.text : "").toContain("webgpt_image_preview");
+    const previewHtml = previewContent && "text" in previewContent ? previewContent.text : "";
+    expect(previewHtml).toContain("webgpt_image_preview");
+    expect(previewHtml).toContain("widgetState");
+    expect(previewHtml).toContain("setWidgetState");
+    expect(previewHtml).toContain("file_image_preview_restore");
+    expect(previewHtml).toContain('request("tools/call"');
     const output = await client.callTool({
       name: "file_read",
       arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
@@ -489,15 +501,28 @@ test("standalone MCP file_read transmits an image content block without base64 d
       name: "file_image_preview",
       arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
     });
-    expect(rendered.structuredContent).toEqual({
+    expect(rendered.structuredContent).toMatchObject({
       path: join(root, "pixel.png"), mime_type: "image/png", bytes: image.length, width: 1, height: 1,
     });
+    const previewId = (rendered.structuredContent as { preview_id: string }).preview_id;
+    expect(previewId).toMatch(/^[0-9a-f-]{36}$/);
     expect(rendered._meta?.webgpt_image_preview).toEqual({
+      preview_id: previewId,
       name: "pixel.png",
       mime_type: "image/png",
       bytes: image.length,
       width: 1,
       height: 1,
+      data_url: `data:image/png;base64,${image.toString("base64")}`,
+    });
+    const restored = await client.callTool({
+      name: "file_image_preview_restore",
+      arguments: { preview_id: previewId },
+    });
+    expect(restored.structuredContent).toMatchObject({ preview_id: previewId, name: "pixel.png", mime_type: "image/png" });
+    expect(JSON.stringify(restored.structuredContent)).not.toContain(image.toString("base64"));
+    expect(restored._meta?.webgpt_image_preview).toMatchObject({
+      preview_id: previewId,
       data_url: `data:image/png;base64,${image.toString("base64")}`,
     });
     writeFileSync(join(root, "plain.txt"), "not an image");
@@ -509,6 +534,57 @@ test("standalone MCP file_read transmits an image content block without base64 d
     expect(JSON.stringify(rejected.content)).toContain("not a supported image");
   } finally {
     await client.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("image preview restore survives an MCP process restart without the source file", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-mcp-image-restore-"));
+  const statePath = join(root, "state.json");
+  const imagePath = join(root, "persistent-preview.png");
+  const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  writeFileSync(imagePath, image);
+  let firstClient: Client | undefined;
+  let secondClient: Client | undefined;
+  try {
+    firstClient = new Client({ name: "webgpt-image-cache-writer", version: "1.0.0" });
+    await firstClient.connect(new StdioClientTransport({
+      command: process.execPath,
+      args: ["src/cli.ts", "mcp", "--state-path", statePath],
+      cwd: process.cwd(),
+      stderr: "pipe",
+    }));
+    const rendered = await firstClient.callTool({
+      name: "file_image_preview",
+      arguments: { path: imagePath, workspace_path: root, permission_mode: "read-only" },
+    });
+    const previewId = (rendered.structuredContent as { preview_id: string }).preview_id;
+    await firstClient.close();
+    firstClient = undefined;
+    rmSync(imagePath, { force: true });
+
+    secondClient = new Client({ name: "webgpt-image-cache-reader", version: "1.0.0" });
+    await secondClient.connect(new StdioClientTransport({
+      command: process.execPath,
+      args: ["src/cli.ts", "mcp", "--state-path", statePath],
+      cwd: process.cwd(),
+      stderr: "pipe",
+    }));
+    const restored = await secondClient.callTool({
+      name: "file_image_preview_restore",
+      arguments: { preview_id: previewId },
+    });
+    expect(restored.isError).not.toBe(true);
+    expect(restored.structuredContent).toMatchObject({
+      preview_id: previewId, name: "persistent-preview.png", mime_type: "image/png", bytes: image.length,
+    });
+    expect(restored._meta?.webgpt_image_preview).toMatchObject({
+      preview_id: previewId,
+      data_url: `data:image/png;base64,${image.toString("base64")}`,
+    });
+  } finally {
+    await firstClient?.close();
+    await secondClient?.close();
     rmSync(root, { recursive: true, force: true });
   }
 });

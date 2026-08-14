@@ -10,6 +10,7 @@ GPT Web Codex treats the ChatGPT account, launcher browser profile, tunnel crede
 - File tools validate paths against the disclosed workspace unless full-control mode was selected.
 - MCP tools return bounded structured output; long logs remain local.
 - Luna image handoff accepts only existing supported image files and rechecks them through the job's recorded workspace and permission scope before returning bounded image data.
+- Refreshable image cards keep only bounded compressed preview data and display metadata in the private standalone cache, never the source path. Entries expire after 90 days and the cache is capped at 128 previews.
 - Browser control uses loopback-only owner tokens and process-bound descriptors.
 
 MCP server instructions and the `codexluna_init` result tell ChatGPT that this conversation's context must not be actively written, updated, or migrated into cross-chat memory. Later Luna tool results repeat a compact policy marker. This is a tool-flow instruction, not control over ChatGPT account Memory settings.

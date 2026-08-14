@@ -5,6 +5,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import * as z from "zod/v4";
 import { DirectToolService } from "../../standalone/direct-tools";
+import { ImagePreviewCache, type CachedImagePreview } from "../../standalone/image-preview-cache";
 import { IMAGE_PREVIEW_HTML, IMAGE_PREVIEW_MIME_TYPE, IMAGE_PREVIEW_RESOURCE_URI } from "../../standalone/image-preview";
 import { LunaJobManager } from "../../standalone/luna-jobs";
 import {
@@ -111,26 +112,59 @@ function imageMetadata(value: Extract<Awaited<ReturnType<DirectToolService["read
   };
 }
 
+function cachedImageMetadata(preview: CachedImagePreview) {
+  return {
+    preview_id: preview.previewId,
+    name: preview.name,
+    mime_type: preview.mimeType,
+    bytes: preview.bytes,
+    ...(preview.optimized === undefined ? {} : { optimized: preview.optimized }),
+    ...(preview.sourceBytes === undefined ? {} : { source_bytes: preview.sourceBytes }),
+    ...(preview.sourceMimeType === undefined ? {} : { source_mime_type: preview.sourceMimeType }),
+    ...(preview.width === undefined ? {} : { width: preview.width }),
+    ...(preview.height === undefined ? {} : { height: preview.height }),
+  };
+}
+
+function cachedImageResult(preview: CachedImagePreview, text: string) {
+  const metadata = cachedImageMetadata(preview);
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: metadata,
+    _meta: {
+      webgpt_image_preview: {
+        ...metadata,
+        data_url: `data:${preview.mimeType};base64,${preview.data}`,
+      },
+    },
+  };
+}
+
 function lunaStatusResult(
   value: Record<string, unknown>,
   preview: Awaited<ReturnType<DirectToolService["readForTransfer"]>> | undefined,
+  cache: ImagePreviewCache,
 ) {
-  const structured = { ...value, session_policy: COMPACT_SESSION_POLICY };
-  if (!preview || !("data" in preview)) return result(structured);
-  const name = preview.path.replaceAll("\\", "/").split("/").at(-1) || "image";
-  const { path: _path, ...previewMetadata } = imageMetadata(preview);
-  const metadata = {
-    name,
-    ...previewMetadata,
-    data_url: `data:${preview.mimeType};base64,${preview.data}`,
+  const cached = preview && "data" in preview ? cache.put(preview) : undefined;
+  const structured = {
+    ...value,
+    image_preview_id: cached?.previewId ?? null,
+    session_policy: COMPACT_SESSION_POLICY,
   };
+  if (!cached) return result(structured);
+  const metadata = cachedImageMetadata(cached);
   return {
     content: [
       { type: "text" as const, text: "Luna status is available in structuredContent; the image follows as native MCP content." },
-      { type: "image" as const, data: preview.data, mimeType: preview.mimeType },
+      { type: "image" as const, data: cached.data, mimeType: cached.mimeType },
     ],
     structuredContent: structured,
-    _meta: { webgpt_image_preview: metadata },
+    _meta: {
+      webgpt_image_preview: {
+        ...metadata,
+        data_url: `data:${cached.mimeType};base64,${cached.data}`,
+      },
+    },
   };
 }
 
@@ -146,19 +180,21 @@ function fileReadResult(value: Awaited<ReturnType<DirectToolService["readForTran
   };
 }
 
-function fileImagePreviewResult(value: Awaited<ReturnType<DirectToolService["readForTransfer"]>>) {
+function fileImagePreviewResult(
+  value: Awaited<ReturnType<DirectToolService["readForTransfer"]>>,
+  cache: ImagePreviewCache,
+) {
   if (!("data" in value)) throw new Error(`Local file is not a supported image: ${value.path}`);
+  const cached = cache.put(value);
   const metadata = imageMetadata(value);
-  const name = value.path.replaceAll("\\", "/").split("/").at(-1) || "image";
-  const { path: _path, ...previewMetadata } = metadata;
+  const cachedMetadata = cachedImageMetadata(cached);
   return {
-    content: [{ type: "text" as const, text: `Displaying local image preview: ${name}` }],
-    structuredContent: metadata,
+    content: [{ type: "text" as const, text: `Displaying local image preview: ${cached.name}` }],
+    structuredContent: { ...metadata, preview_id: cached.previewId },
     _meta: {
       webgpt_image_preview: {
-        name,
-        ...previewMetadata,
-        data_url: `data:${value.mimeType};base64,${value.data}`,
+        ...cachedMetadata,
+        data_url: `data:${cached.mimeType};base64,${cached.data}`,
       },
     },
   };
@@ -167,6 +203,7 @@ function fileImagePreviewResult(value: Awaited<ReturnType<DirectToolService["rea
 export async function runChatGptMcpServer(options: { statePath?: string } = {}): Promise<void> {
   const jobs = new LunaJobManager(new LunaStateStore(options.statePath));
   const direct = new DirectToolService();
+  const imagePreviews = new ImagePreviewCache(options.statePath);
   const server = new McpServer(
     { name: "gpt-web-codex", version: VERSION },
     { instructions: MCP_SERVER_INSTRUCTIONS },
@@ -311,7 +348,8 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
       terminal_event: z.string().nullable(), final_message: z.string().nullable(), error: z.string().nullable(),
       mutation_seen: z.boolean(), event_count: z.number().int().nonnegative(),
       image_artifacts: z.array(z.string()), image_preview_rendered: z.boolean(),
-      image_preview_error: z.string().nullable(), session_policy: compactPolicySchema,
+      image_preview_error: z.string().nullable(), image_preview_id: z.string().uuid().nullable(),
+      session_policy: compactPolicySchema,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: {
@@ -342,7 +380,7 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
       error: job.error ?? null, mutation_seen: job.mutationSeen, event_count: job.eventCount,
       image_artifacts: job.imageArtifacts ?? [], image_preview_rendered: imagePreviewRendered,
       image_preview_error: previewError,
-    }, preview);
+    }, preview, imagePreviews);
   });
 
   server.registerTool("codexluna_cancel", {
@@ -413,6 +451,7 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
       path: z.string(), mime_type: z.string(), bytes: z.number().int().nonnegative(), optimized: z.boolean().optional(),
       source_bytes: z.number().int().nonnegative().optional(), source_mime_type: z.string().optional(),
       width: z.number().int().nonnegative().optional(), height: z.number().int().nonnegative().optional(),
+      preview_id: z.string().uuid(),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: {
@@ -423,7 +462,34 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
       "openai/toolInvocation/invoking": "正在准备图片预览",
       "openai/toolInvocation/invoked": "图片预览已就绪",
     },
-  }, async input => fileImagePreviewResult(await direct.readForTransfer(input.path, input.workspace_path, input.permission_mode, 1, input.max_image_bytes)));
+  }, async input => fileImagePreviewResult(
+    await direct.readForTransfer(input.path, input.workspace_path, input.permission_mode, 1, input.max_image_bytes),
+    imagePreviews,
+  ));
+
+  server.registerTool("file_image_preview_restore", {
+    title: "Restore a local image preview",
+    description: "Restore a previously rendered local image preview after its ChatGPT UI component is recreated. This app-only tool reads the bounded local preview cache by opaque ID and never rereads an arbitrary file path.",
+    inputSchema: { preview_id: z.string().uuid() },
+    outputSchema: {
+      preview_id: z.string().uuid(), name: z.string(), mime_type: z.string(), bytes: z.number().int().nonnegative(),
+      optimized: z.boolean().optional(), source_bytes: z.number().int().nonnegative().optional(),
+      source_mime_type: z.string().optional(), width: z.number().int().nonnegative().optional(),
+      height: z.number().int().nonnegative().optional(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: {
+      securitySchemes: noAuth,
+      ui: { visibility: ["app"] },
+      "openai/widgetAccessible": true,
+      "openai/visibility": "private",
+      "openai/toolInvocation/invoking": "正在恢复图片预览",
+      "openai/toolInvocation/invoked": "图片预览已恢复",
+    },
+  }, async ({ preview_id }) => cachedImageResult(
+    imagePreviews.get(preview_id),
+    "The cached local image preview was restored for the existing UI component.",
+  ));
 
   server.registerTool("file_list", {
     title: "List a local directory",
