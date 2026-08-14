@@ -6,7 +6,12 @@ import { resolve } from "node:path";
 import * as z from "zod/v4";
 import { DirectToolService } from "../../standalone/direct-tools";
 import { ImagePreviewCache, type CachedImagePreview } from "../../standalone/image-preview-cache";
-import { IMAGE_PREVIEW_HTML, IMAGE_PREVIEW_MIME_TYPE, IMAGE_PREVIEW_RESOURCE_URI } from "../../standalone/image-preview";
+import {
+  IMAGE_PREVIEW_HTML,
+  IMAGE_PREVIEW_MIME_TYPE,
+  IMAGE_PREVIEW_RESOURCE_URI,
+  LEGACY_IMAGE_PREVIEW_RESOURCE_URIS,
+} from "../../standalone/image-preview";
 import { LunaJobManager } from "../../standalone/luna-jobs";
 import {
   COMPACT_SESSION_POLICY,
@@ -216,29 +221,36 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 
-  server.registerResource("webgpt-image-preview", IMAGE_PREVIEW_RESOURCE_URI, {
-    title: "WebGPT local image preview",
-    description: "Inline preview card for a verified local image returned by a GPT Web Codex tool.",
-    mimeType: IMAGE_PREVIEW_MIME_TYPE,
-    _meta: {
-      ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
-      "openai/widgetDescription": "Displays a verified local image returned by GPT Web Codex directly in the conversation.",
-      "openai/widgetPrefersBorder": true,
-      "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
-    },
-  }, async () => ({
-    contents: [{
-      uri: IMAGE_PREVIEW_RESOURCE_URI,
+  const registerImagePreviewResource = (name: string, uri: string) => {
+    server.registerResource(name, uri, {
+      title: "WebGPT local image preview",
+      description: "Inline preview card for a verified local image returned by a GPT Web Codex tool.",
       mimeType: IMAGE_PREVIEW_MIME_TYPE,
-      text: IMAGE_PREVIEW_HTML,
       _meta: {
         ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
         "openai/widgetDescription": "Displays a verified local image returned by GPT Web Codex directly in the conversation.",
         "openai/widgetPrefersBorder": true,
         "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
       },
-    }],
-  }));
+    }, async () => ({
+      contents: [{
+        uri,
+        mimeType: IMAGE_PREVIEW_MIME_TYPE,
+        text: IMAGE_PREVIEW_HTML,
+        _meta: {
+          ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
+          "openai/widgetDescription": "Displays a verified local image returned by GPT Web Codex directly in the conversation.",
+          "openai/widgetPrefersBorder": true,
+          "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
+        },
+      }],
+    }));
+  };
+
+  registerImagePreviewResource("webgpt-image-preview", IMAGE_PREVIEW_RESOURCE_URI);
+  LEGACY_IMAGE_PREVIEW_RESOURCE_URIS.forEach((uri, index) => {
+    registerImagePreviewResource(`webgpt-image-preview-legacy-${index + 1}`, uri);
+  });
 
   server.registerTool("codexluna_init", {
     title: "Initialize this ChatGPT conversation",

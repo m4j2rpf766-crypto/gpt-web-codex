@@ -8,7 +8,11 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { buildCodexInvocation } from "../src/standalone/codex-command";
 import { DirectToolService, resolveScopedPath } from "../src/standalone/direct-tools";
-import { IMAGE_PREVIEW_MIME_TYPE, IMAGE_PREVIEW_RESOURCE_URI } from "../src/standalone/image-preview";
+import {
+  IMAGE_PREVIEW_MIME_TYPE,
+  IMAGE_PREVIEW_RESOURCE_URI,
+  LEGACY_IMAGE_PREVIEW_RESOURCE_URIS,
+} from "../src/standalone/image-preview";
 import { LunaJobManager } from "../src/standalone/luna-jobs";
 import { LunaStateStore } from "../src/standalone/state-store";
 import type { LunaJob } from "../src/standalone/types";
@@ -478,6 +482,9 @@ test("standalone MCP file_read transmits an image content block without base64 d
     expect(tools.tools.find(tool => tool.name === "file_image_preview_restore")?._meta?.["openai/visibility"]).toBe("private");
     const resources = await client.listResources();
     expect(resources.resources.some(resource => resource.uri === IMAGE_PREVIEW_RESOURCE_URI)).toBe(true);
+    for (const legacyUri of LEGACY_IMAGE_PREVIEW_RESOURCE_URIS) {
+      expect(resources.resources.some(resource => resource.uri === legacyUri)).toBe(true);
+    }
     const preview = await client.readResource({ uri: IMAGE_PREVIEW_RESOURCE_URI });
     expect(preview.contents[0]?.mimeType).toBe(IMAGE_PREVIEW_MIME_TYPE);
     const previewContent = preview.contents[0];
@@ -487,6 +494,12 @@ test("standalone MCP file_read transmits an image content block without base64 d
     expect(previewHtml).toContain("setWidgetState");
     expect(previewHtml).toContain("file_image_preview_restore");
     expect(previewHtml).toContain('request("tools/call"');
+    for (const legacyUri of LEGACY_IMAGE_PREVIEW_RESOURCE_URIS) {
+      const legacyPreview = await client.readResource({ uri: legacyUri });
+      expect(legacyPreview.contents[0]?.mimeType).toBe(IMAGE_PREVIEW_MIME_TYPE);
+      const legacyContent = legacyPreview.contents[0];
+      expect(legacyContent && "text" in legacyContent ? legacyContent.text : "").toBe(previewHtml);
+    }
     const output = await client.callTool({
       name: "file_read",
       arguments: { path: "pixel.png", workspace_path: root, permission_mode: "read-only" },
