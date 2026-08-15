@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -340,11 +340,29 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
     const names = listedTools.map(tool => tool.name).sort();
     expect(names).toEqual([
       "codexluna_cancel", "codexluna_init", "codexluna_session", "codexluna_start", "codexluna_status",
-      "file_image_preview", "file_image_preview_restore", "file_list", "file_read", "file_search", "file_write",
+      "file_image_preview", "file_image_preview_restore", "file_import_attachment", "file_list", "file_read", "file_search", "file_write",
       "terminal_cancel", "terminal_start", "terminal_status",
     ]);
     expect(listedTools.every(tool => tool.outputSchema && typeof tool.outputSchema === "object")).toBe(true);
     expect(listedTools.every(tool => Array.isArray(tool._meta?.securitySchemes))).toBe(true);
+    const importTool = listedTools.find(tool => tool.name === "file_import_attachment");
+    expect(importTool?._meta?.["openai/fileParams"]).toEqual(["file"]);
+    expect(importTool?.inputSchema).toMatchObject({
+      properties: { file: { type: "object" }, destination: { type: "string" }, workspace_path: { type: "string" } },
+    });
+    expect(importTool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: true });
+    const rejectedImport = await client.callTool({
+      name: "file_import_attachment",
+      arguments: {
+        file: { download_url: "https://files.oaiusercontent.com/not-downloaded", file_id: "file_read_only" },
+        destination: "blocked.bin",
+        workspace_path: root,
+        permission_mode: "read-only",
+      },
+    });
+    expect(rejectedImport.isError).toBe(true);
+    expect(JSON.stringify(rejectedImport.content)).toContain("read-only");
+    expect(existsSync(join(root, "blocked.bin"))).toBe(false);
     const initialized = await client.callTool({
       name: "codexluna_init",
       arguments: { workspace_path: root },

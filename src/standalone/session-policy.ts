@@ -29,5 +29,6 @@ export const MCP_SERVER_INSTRUCTIONS = [
   "Use codexluna_init before the first codexluna_start in a new ChatGPT conversation.",
   "Omit web_session_id when ChatGPT supplies openai/session metadata; otherwise treat the returned web_session_id as private to that conversation and reuse it only in the same conversation.",
   "When the user asks to see or preview a local image, locating a path or receiving Luna text is not a rendered preview. Use file_image_preview directly, or poll codexluna_status until it returns image_preview_rendered=true. Never claim that an image is displayed unless an MCP tool result actually contains the image preview.",
+  "When the user uploads a ChatGPT attachment that local tools or Luna must access, use file_import_attachment with the platform-supplied file object. Disclose the workspace_path and permission_mode before the first local write. Never invent or expose the temporary download URL, never execute an imported file automatically, and use the returned local path for subsequent file or Luna calls.",
   SESSION_BOUNDARY_NOTICE,
 ].join("\n\n");

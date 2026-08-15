@@ -72,12 +72,12 @@ try {
   } else if (process.platform === "win32") {
     const installer = artifact(/-win-x64\.exe$/, "Windows installer");
     run(installer, ["/S"], { timeout: 120_000 });
-    executable = path.join(
-      process.env.LOCALAPPDATA || "",
-      "Programs",
-      launcherManifest.name,
-      `${launcherManifest.build.productName}.exe`,
-    );
+    const programs = path.join(process.env.LOCALAPPDATA || "", "Programs");
+    const installDirectories = [launcherManifest.name, "codex-web-gpt-launcher"];
+    executable = installDirectories
+      .map(directory => path.join(programs, directory, `${launcherManifest.build.productName}.exe`))
+      .find(candidate => fs.existsSync(candidate))
+      || path.join(programs, launcherManifest.name, `${launcherManifest.build.productName}.exe`);
     command = executable;
     args = ["--launcher-smoke-test"];
   } else {

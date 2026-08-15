@@ -5,6 +5,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import * as z from "zod/v4";
 import { DirectToolService } from "../../standalone/direct-tools";
+import { importChatGptAttachment } from "../../standalone/attachment-import";
 import { ImagePreviewCache, type CachedImagePreview } from "../../standalone/image-preview-cache";
 import {
   IMAGE_PREVIEW_HTML,
@@ -454,6 +455,47 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { securitySchemes: noAuth },
   }, async input => fileReadResult(await direct.readForTransfer(input.path, input.workspace_path, input.permission_mode, input.max_chars, input.max_image_bytes)));
+
+  server.registerTool("file_import_attachment", {
+    title: "Import a ChatGPT attachment",
+    description: "Save a file uploaded to this ChatGPT conversation into a disclosed local workspace. The file parameter must be the platform attachment object supplied through openai/fileParams; this is not a general URL downloader. Disabled in read-only mode. Downloads are size-limited, source-checked, hashed, never executed, and do not overwrite by default. After import, use file_read/file_image_preview or give the returned local path to codexluna_start.",
+    inputSchema: {
+      file: z.object({
+        download_url: z.string().min(1),
+        file_id: z.string().min(1),
+        mime_type: z.string().min(1).optional(),
+        file_name: z.string().min(1).optional(),
+      }),
+      destination: z.string().min(1),
+      workspace_path: z.string().min(1),
+      permission_mode: sandbox.default("workspace-write"),
+      overwrite: z.boolean().default(false),
+      expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+      max_bytes: z.number().int().min(1).max(100_000_000).default(20_000_000),
+    },
+    outputSchema: {
+      path: z.string(), bytes: z.number().int().nonnegative(),
+      declared_mime_type: z.string().nullable(), detected_mime_type: z.string().nullable(),
+      mime_type_status: z.enum(["matched", "mismatched", "unknown"]),
+      sha256: z.string(), verified: z.boolean(), file_id: z.string(), file_name: z.string().nullable(),
+      overwritten: z.boolean(), warning: z.string().nullable(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    _meta: {
+      securitySchemes: noAuth,
+      "openai/fileParams": ["file"],
+      "openai/toolInvocation/invoking": "正在导入附件",
+      "openai/toolInvocation/invoked": "附件已导入",
+    },
+  }, async input => result({ ...await importChatGptAttachment({
+    file: input.file,
+    destination: input.destination,
+    workspacePath: input.workspace_path,
+    permissionMode: input.permission_mode,
+    overwrite: input.overwrite,
+    expectedSha256: input.expected_sha256,
+    maxBytes: input.max_bytes,
+  }) }));
 
   server.registerTool("file_image_preview", {
     title: "Display a local image inline",

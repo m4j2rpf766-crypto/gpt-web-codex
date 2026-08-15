@@ -18,6 +18,7 @@ GPT Web Codex is a pure MCP launcher. A normal ChatGPT Web conversation is the p
 - Keeps long-running jobs alive when the ChatGPT reply finishes; jobs can be polled or cancelled explicitly.
 - Turns verified image artifacts from completed Luna jobs into native MCP image content and an inline preview instead of trusting a textual “displayed” claim.
 - Restores inline image previews after a ChatGPT page refresh from a bounded private local cache without copying Base64 into model-visible structured results.
+- Safely imports files uploaded to the current ChatGPT conversation into a user-disclosed local workspace for direct tools or Luna.
 
 ## What it does not do
 
@@ -32,7 +33,7 @@ normal ChatGPT conversation
 OpenAI Tunnel → standalone local MCP runtime
         │
         ├─ codexluna_init/start/status/cancel/session
-        ├─ file_read (text + native MCP images + inline preview) / list / search / write
+        ├─ file_import_attachment / file_read / image preview / list / search / write
         └─ terminal_start/status/cancel
                  │
                  ▼
@@ -47,6 +48,14 @@ OpenAI Tunnel → standalone local MCP runtime
 - When ChatGPT recreates the card after a page refresh or the conversation is reopened, the component calls the private `file_image_preview_restore` tool with that ID. It never rereads an arbitrary source path.
 - Cards created before the refresh-persistence format was introduced cannot be repaired retroactively. Call `file_image_preview` once more to create a restorable card.
 - Clearing ChatGPT site data or deleting the local preview cache removes the information needed for restoration.
+
+## Importing ChatGPT attachments
+
+- When a user uploads an image, PDF, source file, CSV, or another attachment to the current conversation, ChatGPT can call `file_import_attachment` to make it available locally.
+- The tool accepts only the platform attachment object supplied through `openai/fileParams`; it is not a general URL downloader.
+- Calls must disclose `workspace_path`, `permission_mode`, and a destination path. Imports are disabled in `read-only`, and existing files are not overwritten by default.
+- Downloads default to a 20 MB limit and can be raised to at most 100 MB. Results contain the local path, byte count, MIME inspection, and SHA-256—not the temporary download URL—and imported files are never executed automatically.
+- After import, use `file_read`, `file_image_preview`, or pass the returned local path to `codexluna_start`.
 
 ## Development
 
@@ -78,7 +87,7 @@ bun run launcher:test
 
 ## Security boundary
 
-The launcher keeps tunnel credentials in private local storage and redacts them from logs. It does not keep ChatGPT cookies, browser profiles, or conversation history. To restore image cards after a page refresh, compressed preview copies are stored under the private standalone runtime directory for up to 90 days, capped at 128 previews; the cache does not retain the source path. `codexluna_init` returns the resolved workspace, permission mode, durable session ID, and a visible session-memory boundary before local execution. That boundary is prompt-level guidance; it cannot change the ChatGPT account's product-level Memory setting.
+The launcher keeps tunnel credentials in private local storage and redacts them from logs. It does not keep ChatGPT cookies, browser profiles, or conversation history. Attachment imports accept only validated ChatGPT/OpenAI file origins, pin the actual connection to a validated public address, revalidate redirects, create temporary files beside the destination, and clean up failures. To restore image cards after a page refresh, compressed preview copies are stored under the private standalone runtime directory for up to 90 days, capped at 128 previews; the cache does not retain the source path. `codexluna_init` returns the resolved workspace, permission mode, durable session ID, and a visible session-memory boundary before local execution. That boundary is prompt-level guidance; it cannot change the ChatGPT account's product-level Memory setting.
 
 This is an independent, unofficial local MCP connector. It does not automate ChatGPT's UI and must not expose a tunnel or workspace you do not control.
 
