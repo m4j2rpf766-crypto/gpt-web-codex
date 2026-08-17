@@ -50,14 +50,22 @@ OpenAI Tunnel → standalone local MCP runtime
 
 ## Development
 
-Requirements: Windows, Codex CLI, a ChatGPT account with custom connectors, and an OpenAI Tunnel for MCP. The packaged launcher includes Bun; building from source requires Bun 1.3.14.
+Requirements: Windows, Codex CLI, a ChatGPT account with custom connectors, and an OpenAI Tunnel for MCP. The packaged launcher includes Bun; building from source requires Bun 1.3.14. On Windows, install that version with Bun's official PowerShell installer, then open a new PowerShell window and verify it is available:
+
+```powershell
+iex "& {$(irm https://bun.com/install.ps1)} -Version 1.3.14"
+bun --version
+```
+
+Clone the repository and use the root launcher bootstrap:
 
 ```powershell
 git clone https://github.com/m4j2rpf766-crypto/gpt-web-codex.git
 cd gpt-web-codex
-bun install --frozen-lockfile
-bun run launcher:dev
+bun run launcher
 ```
+
+The bootstrap installs both the root and `launcher/` dependencies with their frozen lockfiles before starting the Electron development launcher. Prefer this command over invoking `launcher/` directly. If `bun` is not recognized after installation, reopen PowerShell and confirm that Bun's install directory is on `PATH`.
 
 From the launcher:
 
