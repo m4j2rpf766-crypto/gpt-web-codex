@@ -7,6 +7,8 @@ import { join } from "node:path";
 import {
   detectAttachmentMimeType,
   importChatGptAttachment,
+  isAllowedProxyFakeIpForChatGptAttachment,
+  isApprovedChatGptAttachmentHost,
   parseAttachmentReference,
 } from "../src/standalone/attachment-import";
 
@@ -66,6 +68,24 @@ test("attachment magic-byte detection is independent from declared MIME", () => 
   expect(detectAttachmentMimeType(png)).toBe("image/png");
   expect(detectAttachmentMimeType(Buffer.from("%PDF-1.7\n"))).toBe("application/pdf");
   expect(detectAttachmentMimeType(Buffer.from("plain text"))).toBeNull();
+});
+
+test("production origin policy accepts only the observed OpenAI Azure blob account", () => {
+  expect(isApprovedChatGptAttachmentHost("oaisdmntprkoreacentral.blob.core.windows.net")).toBe(true);
+  expect(isApprovedChatGptAttachmentHost("attacker.blob.core.windows.net")).toBe(false);
+  expect(isApprovedChatGptAttachmentHost("oaisdmntprkoreacentral.blob.core.windows.net.evil.example")).toBe(false);
+});
+
+test("proxy fake IP is accepted only for an approved ChatGPT attachment host", () => {
+  expect(isAllowedProxyFakeIpForChatGptAttachment(
+    "oaisdmntprkoreacentral.blob.core.windows.net",
+    "198.18.64.130",
+  )).toBe(true);
+  expect(isAllowedProxyFakeIpForChatGptAttachment("attacker.example", "198.18.64.130")).toBe(false);
+  expect(isAllowedProxyFakeIpForChatGptAttachment(
+    "oaisdmntprkoreacentral.blob.core.windows.net",
+    "10.0.0.1",
+  )).toBe(false);
 });
 
 test("imports an attachment into the workspace and returns bounded metadata", async () => {
@@ -264,7 +284,7 @@ test("unapproved hosts and loopback are rejected by production policy", async ()
   await expect(importChatGptAttachment({
     file: { download_url: "https://example.com/file", file_id: "file_bad_host" },
     destination: "bad.bin", workspacePath: root, permissionMode: "workspace-write",
-  })).rejects.toThrow("approved ChatGPT file origin");
+  })).rejects.toThrow("host example.com is not an approved ChatGPT file origin");
   await expect(importChatGptAttachment({
     file: { download_url: "http://127.0.0.1/file", file_id: "file_loopback" },
     destination: "bad.bin", workspacePath: root, permissionMode: "workspace-write",

@@ -16,6 +16,7 @@ const DEFAULT_ALLOWED_ATTACHMENT_HOSTS = [
   "openai.com",
   "cdn.openai.com",
   "oaistatic.com",
+  "oaisdmntprkoreacentral.blob.core.windows.net",
 ] as const;
 const MAX_REDIRECTS = 5;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
@@ -93,6 +94,11 @@ function isBlockedIpv4(address: string): boolean {
     || a >= 224;
 }
 
+function isProxyFakeIpv4(address: string): boolean {
+  const parts = parseIpv4(address);
+  return Boolean(parts && parts[0] === 198 && (parts[1] === 18 || parts[1] === 19));
+}
+
 function isBlockedAddress(address: string): boolean {
   const family = net.isIP(address);
   if (family === 4) return isBlockedIpv4(address);
@@ -115,6 +121,14 @@ function hostAllowed(hostname: string, allowedHosts: readonly string[]): boolean
     const allowed = item.toLowerCase().replace(/\.$/, "");
     return host === allowed || host.endsWith(`.${allowed}`);
   });
+}
+
+export function isApprovedChatGptAttachmentHost(hostname: string): boolean {
+  return hostAllowed(hostname, DEFAULT_ALLOWED_ATTACHMENT_HOSTS);
+}
+
+export function isAllowedProxyFakeIpForChatGptAttachment(hostname: string, address: string): boolean {
+  return isApprovedChatGptAttachmentHost(hostname) && isProxyFakeIpv4(address);
 }
 
 export function parseAttachmentReference(value: unknown): ChatGptAttachmentReference {
@@ -143,8 +157,9 @@ async function verifyDownloadUrl(rawUrl: string, policy: ImportNetworkPolicy = {
   }
   if (url.username || url.password) throw new Error("Attachment download_url must not include credentials");
   const allowedHosts = policy.allowedHosts ?? DEFAULT_ALLOWED_ATTACHMENT_HOSTS;
+  const productionOriginPolicy = policy.allowedHosts === undefined;
   if (!loopbackHost && !hostAllowed(url.hostname, allowedHosts)) {
-    throw new Error("Attachment download_url is not an approved ChatGPT file origin");
+    throw new Error(`Attachment download_url host ${url.hostname} is not an approved ChatGPT file origin`);
   }
   if (loopbackHost && !policy.allowHttpLoopback) throw new Error("Attachment download_url points to a blocked host");
 
@@ -157,7 +172,9 @@ async function verifyDownloadUrl(rawUrl: string, policy: ImportNetworkPolicy = {
   const records = await lookup(url.hostname, { all: true, verbatim: true });
   if (!records.length) throw new Error("Attachment download_url hostname could not be resolved");
   for (const record of records) {
-    if (isBlockedAddress(record.address) && !(policy.allowHttpLoopback && loopbackHost)) {
+    const allowedProxyFakeIp = productionOriginPolicy
+      && isAllowedProxyFakeIpForChatGptAttachment(url.hostname, record.address);
+    if (isBlockedAddress(record.address) && !allowedProxyFakeIp && !(policy.allowHttpLoopback && loopbackHost)) {
       throw new Error("Attachment download_url resolves to a blocked address");
     }
   }

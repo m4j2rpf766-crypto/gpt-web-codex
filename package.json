@@ -1,6 +1,6 @@
 {
   "name": "gpt-web-codex",
-  "version": "2.2.6",
+  "version": "2.2.9",
   "private": true,
   "description": "A standalone ChatGPT Web planner with Luna execution and direct local MCP tools.",
   "repository": {
