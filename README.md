@@ -35,7 +35,7 @@ OpenAI Tunnel → standalone local MCP runtime
         ├─ codexluna_init/start/status/cancel/session
         ├─ file_import_attachment / file_read / preview / list / search / write
         ├─ file_create_directory / file_delete_directory
-        └─ terminal_start/status/cancel
+        └─ terminal_exec / start / status / write_stdin / cancel
                  │
                  ▼
           codex exec --json (Luna)
@@ -59,6 +59,7 @@ OpenAI Tunnel → standalone local MCP runtime
 - After import, use `file_read`, `file_image_preview`, or pass the returned local path to `codexluna_start`.
 - `file_create_directory` creates empty directories (and parent directories by default). `file_delete_directory` deletes only empty directories unless `recursive: true` is explicitly supplied; it always refuses the disclosed workspace root and link/junction targets.
 - `file_list` returns each entry's type, optional file size, and `modified_at` as an ISO 8601 timestamp.
+- `terminal_exec` runs ordinary PowerShell/sh commands and waits for bounded stdout, stderr, status, and exit code. Long-running or interactive work uses `terminal_start`, `terminal_status`, `terminal_write_stdin`, and `terminal_cancel` without rerunning the command.
 
 ## Development
 

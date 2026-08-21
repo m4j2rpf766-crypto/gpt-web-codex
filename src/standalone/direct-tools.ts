@@ -59,6 +59,9 @@ interface TerminalJob {
   pid?: number;
   exitCode?: number | null;
   output: string;
+  stdout: string;
+  stderr: string;
+  outputTruncated: boolean;
   startedAt: string;
   finishedAt?: string;
   child?: ChildProcessWithoutNullStreams;
@@ -274,16 +277,36 @@ export class DirectToolService {
     const resolvedCwd = resolveScopedPath(cwd, workspace, mode);
     const id = randomUUID();
     const shell = process.platform === "win32" ? "powershell.exe" : "/bin/sh";
+    const powershellCommand = [
+      "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)",
+      "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+      "$OutputEncoding = [Console]::OutputEncoding",
+      "$global:LASTEXITCODE = $null",
+      `& { ${command} }`,
+      "$__gptWebCodexSuccess = $?",
+      "$__gptWebCodexExitCode = $LASTEXITCODE",
+      "if ($null -ne $__gptWebCodexExitCode) { exit $__gptWebCodexExitCode }",
+      "if (-not $__gptWebCodexSuccess) { exit 1 }",
+    ].join("; ");
     const args = process.platform === "win32"
-      ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+      ? ["-NoLogo", "-NoProfile", "-Command", powershellCommand]
       : ["-lc", command];
     const child = spawn(shell, args, { cwd: resolvedCwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     const job: TerminalJob = {
-      id, command, cwd: resolvedCwd, status: "running", pid: child.pid, output: "", startedAt: new Date().toISOString(), child,
+      id, command, cwd: resolvedCwd, status: "running", pid: child.pid,
+      output: "", stdout: "", stderr: "", outputTruncated: false,
+      startedAt: new Date().toISOString(), child,
     };
-    const collect = (chunk: Buffer) => { job.output = `${job.output}${chunk.toString("utf8")}`.slice(-1_000_000); };
-    child.stdout.on("data", collect);
-    child.stderr.on("data", collect);
+    const collect = (stream: "stdout" | "stderr", chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      const combined = `${job.output}${text}`;
+      const streamed = `${job[stream]}${text}`;
+      if (combined.length > 1_000_000 || streamed.length > 1_000_000) job.outputTruncated = true;
+      job.output = combined.slice(-1_000_000);
+      job[stream] = streamed.slice(-1_000_000);
+    };
+    child.stdout.on("data", chunk => collect("stdout", chunk));
+    child.stderr.on("data", chunk => collect("stderr", chunk));
     child.once("error", error => {
       job.output = `${job.output}\n${error.message}`.trim();
       job.status = "failed";
@@ -302,6 +325,36 @@ export class DirectToolService {
   terminal(jobId: string): Omit<TerminalJob, "child"> {
     const job = this.terminals.get(jobId);
     if (!job) throw new Error(`Unknown terminal job: ${jobId}`);
+    return this.publicTerminal(job);
+  }
+
+  async waitTerminal(jobId: string, waitMs = 60_000): Promise<Omit<TerminalJob, "child">> {
+    const job = this.terminals.get(jobId);
+    if (!job) throw new Error(`Unknown terminal job: ${jobId}`);
+    if (job.status !== "running" || !job.child || waitMs <= 0) return this.publicTerminal(job);
+    await new Promise<void>(resolveWait => {
+      const child = job.child!;
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = () => {
+        clearTimeout(timer);
+        child.off("close", finish);
+        child.off("error", finish);
+        resolveWait();
+      };
+      child.once("close", finish);
+      child.once("error", finish);
+      timer = setTimeout(finish, waitMs);
+    });
+    return this.publicTerminal(job);
+  }
+
+  writeTerminalStdin(jobId: string, input: string, close = false): Omit<TerminalJob, "child"> {
+    const job = this.terminals.get(jobId);
+    if (!job) throw new Error(`Unknown terminal job: ${jobId}`);
+    if (job.status !== "running" || !job.child) throw new Error(`Terminal job is not running: ${jobId}`);
+    if (job.child.stdin.destroyed || job.child.stdin.writableEnded) throw new Error(`Terminal stdin is closed: ${jobId}`);
+    if (input) job.child.stdin.write(input, "utf8");
+    if (close) job.child.stdin.end();
     return this.publicTerminal(job);
   }
 

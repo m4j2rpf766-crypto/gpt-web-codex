@@ -36,7 +36,7 @@ OpenAI Tunnel → 本机独立 MCP 运行时
         ├─ codexluna_init/start/status/cancel/session
         ├─ file_import_attachment / file_read / preview / list / search / write
         ├─ file_create_directory / file_delete_directory
-        └─ terminal_start/status/cancel
+        └─ terminal_exec / start / status / write_stdin / cancel
                  │
                  ▼
           codex exec --json（Luna）
@@ -60,6 +60,7 @@ OpenAI Tunnel → 本机独立 MCP 运行时
 - 导入后可用 `file_read`、`file_image_preview` 检查文件，或把返回路径交给 `codexluna_start`。
 - `file_create_directory` 用于创建空目录，默认同时创建缺失的父目录。`file_delete_directory` 默认只能删除空目录；只有显式填写 `recursive: true` 才会递归删除，并且始终拒绝删除已声明的工作区根目录及符号链接/目录联接目标。
 - `file_list` 会返回每一项的类型、文件大小（如适用），以及 ISO 8601 格式的 `modified_at` 修改时间。
+- `terminal_exec` 用于执行普通 PowerShell/sh 命令，并等待返回受限长度的 stdout、stderr、状态和退出码。长任务或交互式任务使用 `terminal_start`、`terminal_status`、`terminal_write_stdin` 与 `terminal_cancel`，不会为了读取输出而重复执行命令。
 
 ## 本地开发
 

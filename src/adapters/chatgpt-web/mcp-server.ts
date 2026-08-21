@@ -66,7 +66,8 @@ function publicBinding(binding: LunaSessionBinding | undefined) {
 
 function publicTerminal(job: {
   id: string; command: string; cwd: string; status: string; pid?: number; exitCode?: number | null;
-  output: string; startedAt: string; finishedAt?: string;
+  output: string; stdout: string; stderr: string; outputTruncated: boolean;
+  startedAt: string; finishedAt?: string;
 }) {
   return {
     job_id: job.id,
@@ -76,6 +77,9 @@ function publicTerminal(job: {
     pid: job.pid ?? null,
     exit_code: job.exitCode ?? null,
     output: job.output,
+    stdout: job.stdout,
+    stderr: job.stderr,
+    output_truncated: job.outputTruncated,
     started_at: job.startedAt,
     finished_at: job.finishedAt ?? null,
   };
@@ -85,6 +89,7 @@ const terminalOutputSchema = {
   job_id: z.string().uuid(), command: z.string(), cwd: z.string(),
   status: z.enum(["running", "completed", "failed", "cancelled"]),
   pid: z.number().int().nullable(), exit_code: z.number().int().nullable(), output: z.string(),
+  stdout: z.string(), stderr: z.string(), output_truncated: z.boolean(),
   started_at: z.string(), finished_at: z.string().nullable(),
 };
 
@@ -617,6 +622,24 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     _meta: { securitySchemes: noAuth },
   }, async input => result(publicTerminal(direct.startTerminal(input.command, input.cwd, input.workspace_path, input.permission_mode))));
 
+  server.registerTool("terminal_exec", {
+    title: "Run a local terminal command and read its output",
+    description: "Run a PowerShell command on Windows (sh on Linux), wait up to wait_timeout_ms, and return its stdout, stderr, combined output, status, and exit code. If it is still running, use the returned job_id with terminal_status instead of starting the command again. Disabled in read-only mode.",
+    inputSchema: {
+      command: z.string().min(1).max(100_000),
+      cwd: z.string().default("."),
+      workspace_path: z.string().min(1),
+      permission_mode: sandbox.default("workspace-write"),
+      wait_timeout_ms: z.number().int().min(0).max(300_000).default(60_000),
+    },
+    outputSchema: terminalOutputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    _meta: { securitySchemes: noAuth },
+  }, async input => {
+    const started = direct.startTerminal(input.command, input.cwd, input.workspace_path, input.permission_mode);
+    return result(publicTerminal(await direct.waitTerminal(started.id, input.wait_timeout_ms)));
+  });
+
   server.registerTool("terminal_status", {
     title: "Get terminal command status",
     description: "Poll an asynchronous direct terminal command. Output is bounded to the most recent 1,000,000 characters.",
@@ -625,6 +648,15 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { securitySchemes: noAuth },
   }, async ({ job_id }) => result(publicTerminal(direct.terminal(job_id))));
+
+  server.registerTool("terminal_write_stdin", {
+    title: "Write to a running terminal command",
+    description: "Send UTF-8 input to an owned running terminal job. Set close=true to close stdin after the input, then use terminal_status to read subsequent output and completion.",
+    inputSchema: { job_id: z.string().uuid(), input: z.string().max(100_000).default(""), close: z.boolean().default(false) },
+    outputSchema: terminalOutputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    _meta: { securitySchemes: noAuth },
+  }, async ({ job_id, input, close }) => result(publicTerminal(direct.writeTerminalStdin(job_id, input, close))));
 
   server.registerTool("terminal_cancel", {
     title: "Cancel terminal command",

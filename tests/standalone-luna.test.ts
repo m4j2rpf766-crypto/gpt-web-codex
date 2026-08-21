@@ -337,6 +337,35 @@ test("model image transfers compact high-resolution files without modifying the 
   }
 });
 
+test("direct terminal waits for output and supports stdin", async () => {
+  const root = mkdtempSync(join(tmpdir(), "webgpt-terminal-"));
+  const tools = new DirectToolService();
+  try {
+    const quickCommand = process.platform === "win32"
+      ? "Write-Output 'TERMINAL_EXEC_OK'"
+      : "printf 'TERMINAL_EXEC_OK\\n'";
+    const quick = tools.startTerminal(quickCommand, ".", root, "workspace-write");
+    const completed = await tools.waitTerminal(quick.id, 5_000);
+    expect(completed.status).toBe("completed");
+    expect(completed.exitCode).toBe(0);
+    expect(completed.stdout).toContain("TERMINAL_EXEC_OK");
+    expect(completed.stderr).toBe("");
+
+    const interactiveCommand = process.platform === "win32"
+      ? "$line = [Console]::In.ReadLine(); Write-Output \"INPUT:$line\""
+      : "read line; printf 'INPUT:%s\\n' \"$line\"";
+    const interactive = tools.startTerminal(interactiveCommand, ".", root, "workspace-write");
+    tools.writeTerminalStdin(interactive.id, "hello\n", true);
+    const answered = await tools.waitTerminal(interactive.id, 5_000);
+    expect(answered.status).toBe("completed");
+    expect(answered.stdout).toContain("INPUT:hello");
+    expect(() => tools.startTerminal("echo blocked", ".", root, "read-only")).toThrow("read-only");
+  } finally {
+    tools.shutdown();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("standalone MCP exposes Luna and direct tools without a turn broker", async () => {
   const root = mkdtempSync(join(tmpdir(), "webgpt-mcp-"));
   const transport = new StdioClientTransport({
@@ -353,12 +382,13 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
     expect(client.getInstructions()).toContain("无需要求用户回复确认口令");
     expect(client.getInstructions()).toContain("Never claim that an image is displayed");
     expect(client.getInstructions()).toContain("Do not simulate an empty directory");
+    expect(client.getInstructions()).toContain("Use terminal_exec for ordinary commands");
     const listedTools = (await client.listTools()).tools;
     const names = listedTools.map(tool => tool.name).sort();
     expect(names).toEqual([
       "codexluna_cancel", "codexluna_init", "codexluna_session", "codexluna_start", "codexluna_status",
       "file_create_directory", "file_delete_directory", "file_image_preview", "file_image_preview_restore", "file_import_attachment", "file_list", "file_read", "file_search", "file_write",
-      "terminal_cancel", "terminal_start", "terminal_status",
+      "terminal_cancel", "terminal_exec", "terminal_start", "terminal_status", "terminal_write_stdin",
     ]);
     expect(listedTools.every(tool => tool.outputSchema && typeof tool.outputSchema === "object")).toBe(true);
     expect(listedTools.every(tool => Array.isArray(tool._meta?.securitySchemes))).toBe(true);
@@ -368,6 +398,19 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
       properties: { file: { type: "object" }, destination: { type: "string" }, workspace_path: { type: "string" } },
     });
     expect(importTool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: true });
+    const executedTerminal = await client.callTool({
+      name: "terminal_exec",
+      arguments: {
+        command: process.platform === "win32" ? "Write-Output 'MCP_TERMINAL_OK'" : "printf 'MCP_TERMINAL_OK\\n'",
+        cwd: ".",
+        workspace_path: root,
+        permission_mode: "workspace-write",
+        wait_timeout_ms: 5_000,
+      },
+    });
+    expect(executedTerminal.isError).not.toBe(true);
+    expect(executedTerminal.structuredContent).toMatchObject({ status: "completed", exit_code: 0 });
+    expect((executedTerminal.structuredContent as { stdout: string }).stdout).toContain("MCP_TERMINAL_OK");
     const createdDirectory = await client.callTool({
       name: "file_create_directory",
       arguments: {
