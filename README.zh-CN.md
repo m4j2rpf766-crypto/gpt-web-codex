@@ -34,7 +34,8 @@ GPT Web Codex 不会编辑 `~/.codex/config.toml`、安装模型提供方、替�
 OpenAI Tunnel → 本机独立 MCP 运行时
         │
         ├─ codexluna_init/start/status/cancel/session
-        ├─ file_import_attachment / file_read / file_image_preview / list / search / write
+        ├─ file_import_attachment / file_read / preview / list / search / write
+        ├─ file_create_directory / file_delete_directory
         └─ terminal_start/status/cancel
                  │
                  ▼
@@ -57,6 +58,8 @@ OpenAI Tunnel → 本机独立 MCP 运行时
 - 调用时必须填写目标 `workspace_path`、`permission_mode` 和目标相对路径；`read-only` 禁止导入，默认不覆盖已有文件。
 - 下载默认限制为 20 MB，最大可调整至 100 MB；返回本机路径、字节数、MIME 检测和 SHA-256，不返回临时下载 URL，也不会自动执行附件。
 - 导入后可用 `file_read`、`file_image_preview` 检查文件，或把返回路径交给 `codexluna_start`。
+- `file_create_directory` 用于创建空目录，默认同时创建缺失的父目录。`file_delete_directory` 默认只能删除空目录；只有显式填写 `recursive: true` 才会递归删除，并且始终拒绝删除已声明的工作区根目录及符号链接/目录联接目标。
+- `file_list` 会返回每一项的类型、文件大小（如适用），以及 ISO 8601 格式的 `modified_at` 修改时间。
 
 ## 本地开发
 

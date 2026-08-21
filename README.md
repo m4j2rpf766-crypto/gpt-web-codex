@@ -33,7 +33,8 @@ normal ChatGPT conversation
 OpenAI Tunnel → standalone local MCP runtime
         │
         ├─ codexluna_init/start/status/cancel/session
-        ├─ file_import_attachment / file_read / image preview / list / search / write
+        ├─ file_import_attachment / file_read / preview / list / search / write
+        ├─ file_create_directory / file_delete_directory
         └─ terminal_start/status/cancel
                  │
                  ▼
@@ -56,6 +57,8 @@ OpenAI Tunnel → standalone local MCP runtime
 - Calls must disclose `workspace_path`, `permission_mode`, and a destination path. Imports are disabled in `read-only`, and existing files are not overwritten by default.
 - Downloads default to a 20 MB limit and can be raised to at most 100 MB. Results contain the local path, byte count, MIME inspection, and SHA-256—not the temporary download URL—and imported files are never executed automatically.
 - After import, use `file_read`, `file_image_preview`, or pass the returned local path to `codexluna_start`.
+- `file_create_directory` creates empty directories (and parent directories by default). `file_delete_directory` deletes only empty directories unless `recursive: true` is explicitly supplied; it always refuses the disclosed workspace root and link/junction targets.
+- `file_list` returns each entry's type, optional file size, and `modified_at` as an ISO 8601 timestamp.
 
 ## Development
 

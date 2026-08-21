@@ -547,11 +547,12 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
 
   server.registerTool("file_list", {
     title: "List a local directory",
-    description: "List direct children of a directory in the disclosed workspace.",
+    description: "List direct children of a directory in the disclosed workspace, including each entry's last-modified time as an ISO 8601 timestamp.",
     inputSchema: { path: z.string().default("."), workspace_path: z.string().min(1), permission_mode: sandbox.default("workspace-write") },
     outputSchema: {
       path: z.string(), entries: z.array(z.object({
         name: z.string(), kind: z.enum(["directory", "file", "other"]), size: z.number().int().nonnegative().optional(),
+        modified_at: z.string().datetime(),
       })),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -578,6 +579,34 @@ export async function runChatGptMcpServer(options: { statePath?: string } = {}):
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     _meta: { securitySchemes: noAuth },
   }, async input => result(direct.write(input.path, input.content, input.workspace_path, input.permission_mode)));
+
+  server.registerTool("file_create_directory", {
+    title: "Create a local directory",
+    description: "Create a directory in the disclosed workspace. Parent directories are created by default. Disabled in read-only mode; workspace-write stays under the disclosed workspace.",
+    inputSchema: {
+      path: z.string().min(1),
+      workspace_path: z.string().min(1),
+      permission_mode: sandbox.default("workspace-write"),
+      recursive: z.boolean().default(true),
+    },
+    outputSchema: { path: z.string(), created: z.boolean(), recursive: z.boolean() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { securitySchemes: noAuth },
+  }, async input => result(direct.createDirectory(input.path, input.workspace_path, input.permission_mode, input.recursive)));
+
+  server.registerTool("file_delete_directory", {
+    title: "Delete a local directory",
+    description: "Delete a directory in the disclosed workspace. By default only an empty directory can be deleted; recursive deletion must be explicitly requested. The disclosed workspace root and symbolic-link or junction targets are always refused. Disabled in read-only mode.",
+    inputSchema: {
+      path: z.string().min(1),
+      workspace_path: z.string().min(1),
+      permission_mode: sandbox.default("workspace-write"),
+      recursive: z.boolean().default(false),
+    },
+    outputSchema: { path: z.string(), deleted: z.literal(true), recursive: z.boolean() },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    _meta: { securitySchemes: noAuth },
+  }, async input => result(direct.deleteDirectory(input.path, input.workspace_path, input.permission_mode, input.recursive)));
 
   server.registerTool("terminal_start", {
     title: "Start a local terminal command",

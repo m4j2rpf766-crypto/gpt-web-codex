@@ -1,7 +1,18 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  rmdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import sharp from "sharp";
 import type { LunaSandbox } from "./types";
 import { terminateOwnedProcessTree } from "./process-tree";
@@ -64,6 +75,25 @@ export function resolveScopedPath(path: string, workspace: string, mode: LunaSan
     throw new Error(`Path is outside the disclosed workspace: ${target}`);
   }
   return target;
+}
+
+function assertWritableMode(mode: LunaSandbox, operation: string): void {
+  if (mode === "read-only") throw new Error(`${operation} is disabled in read-only mode`);
+}
+
+function assertExistingAncestorWithinWorkspace(target: string, workspace: string, mode: LunaSandbox): void {
+  if (mode === "danger-full-access") return;
+  const workspaceRoot = realpathSync(resolve(workspace));
+  let ancestor = target;
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
+  const resolvedAncestor = realpathSync(ancestor);
+  if (!within(resolvedAncestor, workspaceRoot)) {
+    throw new Error(`Path resolves outside the disclosed workspace through a link: ${target}`);
+  }
 }
 
 export class DirectToolService {
@@ -148,12 +178,21 @@ export class DirectToolService {
     throw new Error(`Image could not be reduced below the ${limit}-byte MCP transfer limit: ${target} (smallest ${best?.bytes.length ?? source.length} bytes)`);
   }
 
-  list(path: string, workspace: string, mode: LunaSandbox): { path: string; entries: Array<{ name: string; kind: string; size?: number }> } {
+  list(path: string, workspace: string, mode: LunaSandbox): {
+    path: string;
+    entries: Array<{ name: string; kind: string; size?: number; modified_at: string }>;
+  } {
     const target = resolveScopedPath(path, workspace, mode);
     const entries = readdirSync(target, { withFileTypes: true }).map(entry => {
       const kind = entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other";
-      const size = entry.isFile() ? statSync(resolve(target, entry.name)).size : undefined;
-      return { name: entry.name, kind, ...(size === undefined ? {} : { size }) };
+      const metadata = lstatSync(resolve(target, entry.name));
+      const size = entry.isFile() ? metadata.size : undefined;
+      return {
+        name: entry.name,
+        kind,
+        ...(size === undefined ? {} : { size }),
+        modified_at: metadata.mtime.toISOString(),
+      };
     });
     return { path: target, entries };
   }
@@ -194,6 +233,40 @@ export class DirectToolService {
     const target = resolveScopedPath(path, workspace, mode);
     writeFileSync(target, content, "utf8");
     return { path: target, bytes: Buffer.byteLength(content) };
+  }
+
+  createDirectory(path: string, workspace: string, mode: LunaSandbox, recursive = true): {
+    path: string; created: boolean; recursive: boolean;
+  } {
+    assertWritableMode(mode, "Directory creation");
+    const target = resolveScopedPath(path, workspace, mode);
+    assertExistingAncestorWithinWorkspace(target, workspace, mode);
+    const existed = existsSync(target);
+    if (existed && !lstatSync(target).isDirectory()) {
+      throw new Error(`A non-directory entry already exists at: ${target}`);
+    }
+    mkdirSync(target, { recursive });
+    return { path: target, created: !existed, recursive };
+  }
+
+  deleteDirectory(path: string, workspace: string, mode: LunaSandbox, recursive = false): {
+    path: string; deleted: true; recursive: boolean;
+  } {
+    assertWritableMode(mode, "Directory deletion");
+    const target = resolveScopedPath(path, workspace, mode);
+    const workspaceRoot = resolve(workspace);
+    if (target === workspaceRoot) {
+      throw new Error(`Refusing to delete the disclosed workspace root: ${target}`);
+    }
+    assertExistingAncestorWithinWorkspace(target, workspace, mode);
+    const entry = lstatSync(target);
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Refusing to delete a directory through a symbolic link or junction: ${target}`);
+    }
+    if (!entry.isDirectory()) throw new Error(`Path is not a directory: ${target}`);
+    if (recursive) rmSync(target, { recursive: true, force: false });
+    else rmdirSync(target);
+    return { path: target, deleted: true, recursive };
   }
 
   startTerminal(command: string, cwd: string, workspace: string, mode: LunaSandbox): Omit<TerminalJob, "child"> {

@@ -275,11 +275,27 @@ test("direct files enforce the disclosed workspace and permission mode", () => {
     tools.write("hello.txt", "hello", workspace, "workspace-write");
     const textFile = tools.read("hello.txt", workspace, "workspace-write");
     expect("text" in textFile ? textFile.text : null).toBe("hello");
+    const listedFile = tools.list(".", workspace, "workspace-write").entries.find(entry => entry.name === "hello.txt");
+    expect(listedFile?.kind).toBe("file");
+    expect(listedFile?.size).toBe(5);
+    expect(Number.isFinite(Date.parse(listedFile?.modified_at ?? ""))).toBe(true);
     expect(tools.search("hell", ".", workspace, "workspace-write").matches[0]?.line).toBe(1);
     expect(() => tools.write("blocked.txt", "x", workspace, "read-only")).toThrow("read-only");
     const outsidePath = join("..", "outside.txt");
     expect(() => resolveScopedPath(outsidePath, workspace, "workspace-write")).toThrow("outside");
     expect(resolveScopedPath(outsidePath, workspace, "danger-full-access")).toBe(join(root, "outside.txt"));
+
+    expect(tools.createDirectory(join("nested", "empty"), workspace, "workspace-write")).toEqual({
+      path: join(workspace, "nested", "empty"), created: true, recursive: true,
+    });
+    expect(existsSync(join(workspace, "nested", "empty"))).toBe(true);
+    expect(() => tools.createDirectory("blocked", workspace, "read-only")).toThrow("read-only");
+    expect(() => tools.deleteDirectory("nested", workspace, "workspace-write")).toThrow();
+    expect(tools.deleteDirectory("nested", workspace, "workspace-write", true)).toEqual({
+      path: join(workspace, "nested"), deleted: true, recursive: true,
+    });
+    expect(existsSync(join(workspace, "nested"))).toBe(false);
+    expect(() => tools.deleteDirectory(".", workspace, "workspace-write", true)).toThrow("workspace root");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -336,11 +352,12 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
     expect(client.getInstructions()).toContain("不得主动把本对话中的内容");
     expect(client.getInstructions()).toContain("无需要求用户回复确认口令");
     expect(client.getInstructions()).toContain("Never claim that an image is displayed");
+    expect(client.getInstructions()).toContain("Do not simulate an empty directory");
     const listedTools = (await client.listTools()).tools;
     const names = listedTools.map(tool => tool.name).sort();
     expect(names).toEqual([
       "codexluna_cancel", "codexluna_init", "codexluna_session", "codexluna_start", "codexluna_status",
-      "file_image_preview", "file_image_preview_restore", "file_import_attachment", "file_list", "file_read", "file_search", "file_write",
+      "file_create_directory", "file_delete_directory", "file_image_preview", "file_image_preview_restore", "file_import_attachment", "file_list", "file_read", "file_search", "file_write",
       "terminal_cancel", "terminal_start", "terminal_status",
     ]);
     expect(listedTools.every(tool => tool.outputSchema && typeof tool.outputSchema === "object")).toBe(true);
@@ -351,6 +368,43 @@ test("standalone MCP exposes Luna and direct tools without a turn broker", async
       properties: { file: { type: "object" }, destination: { type: "string" }, workspace_path: { type: "string" } },
     });
     expect(importTool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: true });
+    const createdDirectory = await client.callTool({
+      name: "file_create_directory",
+      arguments: {
+        path: join("mcp-created", "child"),
+        workspace_path: root,
+        permission_mode: "workspace-write",
+      },
+    });
+    expect(createdDirectory.isError).not.toBe(true);
+    expect(existsSync(join(root, "mcp-created", "child"))).toBe(true);
+    const listedDirectory = await client.callTool({
+      name: "file_list",
+      arguments: { path: ".", workspace_path: root, permission_mode: "workspace-write" },
+    });
+    expect(listedDirectory.isError).not.toBe(true);
+    const listedEntries = (listedDirectory.structuredContent as { entries: Array<{ name: string; modified_at: string }> }).entries;
+    expect(Number.isFinite(Date.parse(listedEntries.find(entry => entry.name === "mcp-created")?.modified_at ?? ""))).toBe(true);
+    const nonRecursiveDelete = await client.callTool({
+      name: "file_delete_directory",
+      arguments: {
+        path: "mcp-created",
+        workspace_path: root,
+        permission_mode: "workspace-write",
+      },
+    });
+    expect(nonRecursiveDelete.isError).toBe(true);
+    const recursiveDelete = await client.callTool({
+      name: "file_delete_directory",
+      arguments: {
+        path: "mcp-created",
+        workspace_path: root,
+        permission_mode: "workspace-write",
+        recursive: true,
+      },
+    });
+    expect(recursiveDelete.isError).not.toBe(true);
+    expect(existsSync(join(root, "mcp-created"))).toBe(false);
     const rejectedImport = await client.callTool({
       name: "file_import_attachment",
       arguments: {
