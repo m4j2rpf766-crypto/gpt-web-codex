@@ -11,6 +11,7 @@ const repositoryManifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 
 test("the public launcher command uses the Electron bootstrap", () => {
   assert.equal(repositoryManifest.scripts.launcher, "bun run scripts/start-launcher.ts");
   assert.equal(repositoryManifest.scripts.launcher, repositoryManifest.scripts.app);
+  assert.equal(repositoryManifest.scripts["launcher:dev"], repositoryManifest.scripts.launcher);
 });
 
 test("launcher publishes native packages for all supported desktop operating systems", () => {

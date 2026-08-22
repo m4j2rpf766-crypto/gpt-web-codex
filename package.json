@@ -38,7 +38,7 @@
     "app": "bun run scripts/start-launcher.ts",
     "app:package": "bun run --cwd launcher package",
     "app:smoke": "bun run --cwd launcher smoke:package",
-    "launcher:dev": "bun run --cwd launcher dev",
+    "launcher:dev": "bun run scripts/start-launcher.ts",
     "launcher:typecheck": "bun run --cwd launcher typecheck",
     "launcher:build": "bun run --cwd launcher build",
     "launcher:test": "bun run --cwd launcher test",

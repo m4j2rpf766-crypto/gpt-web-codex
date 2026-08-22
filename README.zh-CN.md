@@ -64,14 +64,22 @@ OpenAI Tunnel → 本机独立 MCP 运行时
 
 ## 本地开发
 
-当前需要 Windows、Codex CLI、支持自定义连接器的 ChatGPT 账户，以及用于 MCP 的 OpenAI Tunnel。安装包已经内置 Bun；从源码构建需要 Bun 1.3.14。
+当前需要 Windows、Codex CLI、支持自定义连接器的 ChatGPT 账户，以及用于 MCP 的 OpenAI Tunnel。安装包已经内置 Bun；从源码构建需要 Bun 1.3.14。Windows 可使用 Bun 官方 PowerShell 安装脚本安装指定版本，随后重新打开 PowerShell 并确认命令可用：
+
+```powershell
+iex "& {$(irm https://bun.com/install.ps1)} -Version 1.3.14"
+bun --version
+```
+
+克隆仓库后，使用根目录提供的 launcher bootstrap：
 
 ```powershell
 git clone https://github.com/m4j2rpf766-crypto/gpt-web-codex.git
 cd gpt-web-codex
-bun install --frozen-lockfile
-bun run launcher:dev
+bun run launcher
 ```
+
+该 bootstrap 会分别按 frozen lockfile 安装根目录和 `launcher/` 的依赖，再启动 Electron 开发版。建议使用这个入口，不要直接绕过它启动 `launcher/`。如果安装后仍提示无法识别 `bun`，请重新打开 PowerShell，并确认 Bun 的安装目录已经加入 `PATH`。
 
 在启动器中：
 
